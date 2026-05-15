@@ -56,7 +56,7 @@ def log(msg: str) -> None:
 
 
 def upload_obcine(conn: psycopg.Connection) -> None:
-    log("⌁ obcine …")
+    log("--- obcine ---")
     gdf = gpd.read_file(DATA_DIR / "obcine.geojson").to_crs(4326)
     rows = []
     for _, r in gdf.iterrows():
@@ -74,11 +74,11 @@ def upload_obcine(conn: psycopg.Connection) -> None:
             rows,
         )
     conn.commit()
-    log(f"  ✓ {len(rows):,} občine")
+    log(f"  OK: {len(rows):,} obcine")
 
 
 def upload_protected_areas(conn: psycopg.Connection) -> None:
-    log("⌁ protected_areas …")
+    log("--- protected_areas ---")
     rows = []
     for src, fname, cat_col in [
         ("zavarovana", "zavarovana_si.geojson", "ZO_VRSTA"),
@@ -100,11 +100,11 @@ def upload_protected_areas(conn: psycopg.Connection) -> None:
             rows,
         )
     conn.commit()
-    log(f"  ✓ {len(rows):,} protected areas")
+    log(f"  OK: {len(rows):,} protected areas")
 
 
 def upload_amenities(conn: psycopg.Connection) -> None:
-    log("⌁ amenities …")
+    log("--- amenities ---")
     gdf = gpd.read_file(DATA_DIR / "amenities.gpkg").to_crs(4326)
     rows = []
     for _, r in gdf.iterrows():
@@ -127,11 +127,11 @@ def upload_amenities(conn: psycopg.Connection) -> None:
             "(select coalesce(max(id), 1) from amenities));"
         )
     conn.commit()
-    log(f"  ✓ {len(rows):,} amenities")
+    log(f"  OK: {len(rows):,} amenities")
 
 
 def upload_isochrones(conn: psycopg.Connection, batch_size: int = 2000) -> None:
-    log("⌁ amenity_isochrones …")
+    log("--- amenity_isochrones ---")
     with conn.cursor() as cur:
         cur.execute("truncate table amenity_isochrones cascade;")
     conn.commit()
@@ -171,11 +171,11 @@ def upload_isochrones(conn: psycopg.Connection, batch_size: int = 2000) -> None:
             if len(rows) >= batch_size:
                 flush()
         flush()
-    log(f"\n  ✓ {total:,} isochrones")
+    log(f"\n  OK: {total:,} isochrones")
 
 
 def upload_cell_scores(conn: psycopg.Connection) -> None:
-    log("⌁ cell_scores (~1.08M rows, COPY) …")
+    log("--- cell_scores (~1.08M rows, COPY) ---")
     src = DATA_DIR / "cell_scores.json"
     t = time.time()
     with src.open() as f:
@@ -200,11 +200,11 @@ def upload_cell_scores(conn: psycopg.Connection) -> None:
                 pop_str = "\\N" if pop is None else f"{pop}"
                 cp.write(f"{c['h3']}\t{c['score']}\t{walk_lit}\t{bike_lit}\t{pop_str}\n")
     conn.commit()
-    log(f"  ✓ {len(cells):,} cell_scores in {time.time()-t:.1f}s")
+    log(f"  OK: {len(cells):,} cell_scores in {time.time()-t:.1f}s")
 
 
 def upload_storage_files() -> None:
-    log("⌁ Storage buckets + files …")
+    log("--- Storage buckets + files ---")
     headers = {
         "Authorization": f"Bearer {SUPABASE_KEY}",
         "apikey": SUPABASE_KEY,
@@ -216,11 +216,11 @@ def upload_storage_files() -> None:
                 json={"id": bucket, "name": bucket, "public": True},
             )
             if r.status_code in (200, 201):
-                log(f"  ✓ created bucket {bucket}")
+                log(f"  OK: created bucket {bucket}")
             elif r.status_code == 409 or "already exists" in r.text.lower():
-                log(f"  ✓ bucket {bucket} exists")
+                log(f"  OK: bucket {bucket} exists")
             else:
-                log(f"  ✗ bucket {bucket}: HTTP {r.status_code} {r.text}")
+                log(f"  ERR: bucket {bucket}: HTTP {r.status_code} {r.text}")
 
         # Supabase Storage doesn't preserve Content-Encoding headers, so we
         # upload the uncompressed JSON. The .gz stays in `data/` for cold deploys
@@ -247,13 +247,13 @@ def upload_storage_files() -> None:
                     headers=up_headers,
                 )
             if r.status_code in (200, 201):
-                log(f"  ✓ {bucket}/{dst_name}  ({src.stat().st_size/1024:,.0f} KB)")
+                log(f"  OK: {bucket}/{dst_name}  ({src.stat().st_size/1024:,.0f} KB)")
             else:
-                log(f"  ✗ {bucket}/{dst_name}: HTTP {r.status_code} {r.text[:200]}")
+                log(f"  ERR: {bucket}/{dst_name}: HTTP {r.status_code} {r.text[:200]}")
 
 
 def verify_counts(conn: psycopg.Connection) -> None:
-    log("\n⌁ verifying row counts …")
+    log("\n--- verifying row counts ---")
     with conn.cursor() as cur:
         for t in ("obcine", "protected_areas", "amenities", "amenity_isochrones", "cell_scores"):
             cur.execute(sql.SQL("select count(*) from {}").format(sql.Identifier(t)))

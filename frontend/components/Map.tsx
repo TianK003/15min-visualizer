@@ -12,6 +12,7 @@ import * as h3 from "h3-js";
 import Scorecard from "@/components/Scorecard";
 import AddressSearch from "@/components/AddressSearch";
 import IzvorPodatkov from "@/components/IzvorPodatkov";
+import ChatBox from "@/components/ChatBox";
 
 const BASEMAP_STYLE = "https://tiles.openfreemap.org/styles/positron";
 
@@ -392,6 +393,7 @@ export default function SloveniaMap() {
 
   return (
     <>
+      <ChatBox onSelectH3={setSelectedH3} flyToCoord={flyToCoord} />
       <div id="map-root" ref={containerRef} />
 
       <AddressSearch onPick={flyToCoord} />
@@ -487,6 +489,8 @@ export default function SloveniaMap() {
           Podatki s strežnika niso dosegljivi ({cellsError}). Prikazane so vzorčne celice.
         </div>
       )}
+
+
     </>
   );
 }
