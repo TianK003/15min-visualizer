@@ -1,12 +1,13 @@
 import { Layer, project32 } from "@deck.gl/core";
 import type { LayerContext, LayerProps, UpdateParameters, DefaultProps } from "@deck.gl/core";
 import { Model } from "@luma.gl/engine";
-import { Buffer } from "@luma.gl/core";
+import { Buffer, RenderPass } from "@luma.gl/core";
 
 // Vertex shader: takes [lng, lat] positions and projects to clip space via
 // deck.gl's project32 module. Per-vertex RGBA (unorm8x4) interpolation is
 // handled automatically by WebGL's rasterizer — no fragment-shader work needed.
 const vs = `\
+#version 300 es
 #define SHADER_NAME h3-gradient-mesh-vs
 
 in vec2 positions;
@@ -16,7 +17,7 @@ out vec4 vColor;
 
 void main() {
   vec3 p = vec3(positions, 0.0);
-  gl_Position = project_position_to_clipspace(p);
+  gl_Position = project_position_to_clipspace(p, vec3(0.0), vec3(0.0));
   vColor = colors;
 }
 `;
@@ -24,6 +25,7 @@ void main() {
 // Fragment shader: pass the interpolated per-vertex color through, then let
 // deck.gl's DECKGL_FILTER_COLOR macro apply any registered color effects.
 const fs = `\
+#version 300 es
 #define SHADER_NAME h3-gradient-mesh-fs
 precision highp float;
 
@@ -93,10 +95,10 @@ export class H3GradientMeshLayer extends Layer<H3GradientMeshLayerProps> {
     }
   }
 
-  draw({ renderPass }: { renderPass: LayerContext["renderPass"] }): void {
+  draw(opts: { renderPass: RenderPass } & Record<string, unknown>): void {
     const { model } = this.state;
     if (!model || this.props.vertexCount === 0) return;
-    model.draw(renderPass ?? this.context.renderPass);
+    model.draw(opts.renderPass);
   }
 
   finalizeState(context: LayerContext): void {
