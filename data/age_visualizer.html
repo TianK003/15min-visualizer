@@ -1,0 +1,866 @@
+<!DOCTYPE html>
+<html lang="sl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Slovenija — Age Distribution Visualizer</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #081018;
+    --bg2: #0f1724;
+    --panel: rgba(10, 15, 24, 0.88);
+    --panel-border: rgba(122, 162, 255, 0.18);
+    --text: #e8eef8;
+    --muted: #8ea0bd;
+    --accent: #79a8ff;
+    --accent2: #7cf0c5;
+    --shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; width: 100%; height: 100%; }
+  body {
+    font-family: Inter, system-ui, sans-serif;
+    color: var(--text);
+    background:
+      radial-gradient(circle at top left, rgba(121, 168, 255, 0.22), transparent 34%),
+      radial-gradient(circle at bottom right, rgba(124, 240, 197, 0.16), transparent 28%),
+      linear-gradient(160deg, #07111b 0%, #0b1320 42%, #050910 100%);
+    overflow: hidden;
+  }
+
+  .app {
+    height: 100vh;
+    display: grid;
+    grid-template-rows: auto 1fr;
+  }
+
+  .header {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    padding: 16px 22px;
+    border-bottom: 1px solid var(--panel-border);
+    background: linear-gradient(135deg, rgba(13, 18, 30, 0.96), rgba(10, 15, 24, 0.78));
+    backdrop-filter: blur(18px);
+    box-shadow: var(--shadow);
+    z-index: 20;
+    flex-wrap: wrap;
+  }
+
+  .title-block {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 240px;
+  }
+
+  h1 {
+    margin: 0;
+    font-size: 18px;
+    line-height: 1.1;
+    letter-spacing: -0.03em;
+    font-weight: 800;
+    background: linear-gradient(135deg, #d7e7ff, #86adff 40%, #82f1c8 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  .subtitle {
+    font-size: 12px;
+    color: var(--muted);
+  }
+
+  .controls {
+    display: flex;
+    gap: 14px;
+    flex-wrap: wrap;
+    align-items: end;
+    flex: 1;
+  }
+
+  .control {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    min-width: 220px;
+  }
+
+  .control label {
+    font-size: 10px;
+    font-weight: 700;
+    color: #97a8c5;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  select {
+    appearance: none;
+    border: 1px solid rgba(121, 168, 255, 0.28);
+    background: rgba(11, 18, 30, 0.94);
+    color: var(--text);
+    border-radius: 12px;
+    padding: 11px 13px;
+    font: inherit;
+    font-size: 13px;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+    cursor: pointer;
+  }
+
+  select:focus {
+    outline: none;
+    border-color: rgba(124, 240, 197, 0.68);
+    box-shadow: 0 0 0 3px rgba(124, 240, 197, 0.12);
+  }
+
+  .stats {
+    display: flex;
+    gap: 14px;
+    margin-left: auto;
+    flex-wrap: wrap;
+  }
+
+  .stat {
+    min-width: 92px;
+    padding: 10px 12px;
+    border-radius: 14px;
+    background: rgba(10, 15, 24, 0.78);
+    border: 1px solid rgba(121, 168, 255, 0.14);
+    box-shadow: 0 10px 24px rgba(0, 0, 0, 0.24);
+    text-align: center;
+  }
+
+  .stat-value {
+    font-size: 15px;
+    font-weight: 800;
+    color: #d9e7ff;
+  }
+
+  .stat-label {
+    margin-top: 4px;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+  }
+
+  .main {
+    position: relative;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 360px;
+    min-height: 0;
+  }
+
+  #map {
+    min-height: 0;
+    background: #081018;
+  }
+
+  .sidebar {
+    position: relative;
+    padding: 16px;
+    border-left: 1px solid rgba(121, 168, 255, 0.12);
+    background:
+      linear-gradient(180deg, rgba(8, 16, 24, 0.88), rgba(7, 11, 18, 0.96)),
+      radial-gradient(circle at top, rgba(121, 168, 255, 0.08), transparent 50%);
+    overflow: auto;
+  }
+
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    border-radius: 20px;
+    padding: 16px;
+    box-shadow: var(--shadow);
+    margin-bottom: 14px;
+    backdrop-filter: blur(16px);
+  }
+
+  .panel h2, .panel h3 {
+    margin: 0 0 8px 0;
+    font-size: 14px;
+    letter-spacing: -0.01em;
+  }
+
+  .panel .hint {
+    font-size: 12px;
+    color: var(--muted);
+    line-height: 1.5;
+  }
+
+  .detail-name {
+    margin: 2px 0 4px 0;
+    font-size: 20px;
+    font-weight: 800;
+    letter-spacing: -0.03em;
+  }
+
+  .detail-meta {
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.55;
+  }
+
+  .detail-value {
+    margin: 12px 0 10px;
+    font-size: 32px;
+    font-weight: 800;
+    letter-spacing: -0.04em;
+    color: #d9e7ff;
+  }
+
+  .detail-value small {
+    display: block;
+    margin-top: 4px;
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0;
+  }
+
+  .chart {
+    width: 100%;
+    height: auto;
+    display: block;
+    overflow: visible;
+  }
+
+  .legend {
+    background: rgba(10, 15, 24, 0.92);
+    backdrop-filter: blur(14px);
+    border: 1px solid var(--panel-border);
+    border-radius: 16px;
+    padding: 12px 14px;
+    box-shadow: var(--shadow);
+    min-width: 170px;
+  }
+
+  .legend-title {
+    font-size: 11px;
+    color: #dce7fb;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 8px;
+  }
+
+  .legend-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 4px 0;
+  }
+
+  .swatch {
+    width: 18px;
+    height: 12px;
+    border-radius: 3px;
+    flex-shrink: 0;
+  }
+
+  .legend-label {
+    color: #92a5c4;
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .info {
+    background: rgba(10, 15, 24, 0.92);
+    backdrop-filter: blur(14px);
+    border: 1px solid var(--panel-border);
+    border-radius: 16px;
+    padding: 14px 16px;
+    box-shadow: var(--shadow);
+    min-width: 240px;
+  }
+
+  .loading {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(4, 8, 14, 0.86);
+    z-index: 2000;
+    transition: opacity 0.3s ease;
+  }
+
+  .loading.hidden { opacity: 0; pointer-events: none; }
+
+  .spinner {
+    width: 42px;
+    height: 42px;
+    border-radius: 50%;
+    border: 3px solid rgba(121, 168, 255, 0.18);
+    border-top-color: #79a8ff;
+    animation: spin 0.85s linear infinite;
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+
+  .leaflet-container { background: #081018 !important; }
+  .leaflet-control-zoom a {
+    background: rgba(12, 18, 29, 0.94) !important;
+    color: #ebf2ff !important;
+    border-color: rgba(121, 168, 255, 0.16) !important;
+  }
+  .leaflet-control-zoom a:hover { background: rgba(24, 33, 51, 0.98) !important; }
+  .leaflet-control-attribution {
+    background: rgba(8, 16, 24, 0.72) !important;
+    color: #91a4c1 !important;
+    border-radius: 8px !important;
+  }
+
+  @media (max-width: 1100px) {
+    .main { grid-template-columns: 1fr; }
+    .sidebar {
+      border-left: none;
+      border-top: 1px solid rgba(121, 168, 255, 0.12);
+      max-height: 44vh;
+    }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="header">
+    <div class="title-block">
+      <h1>Slovenija — Age Distribution Visualizer</h1>
+      <div class="subtitle">SURS SiStat · občine · latest half-year from obcine_age_distribution.csv</div>
+    </div>
+
+    <div class="controls">
+      <div class="control">
+        <label for="sexSelect">Sex</label>
+        <select id="sexSelect"></select>
+      </div>
+      <div class="control">
+        <label for="metricSelect">Metric</label>
+        <select id="metricSelect"></select>
+      </div>
+    </div>
+
+    <div class="stats">
+      <div class="stat"><div class="stat-value" id="statMin">—</div><div class="stat-label">Min</div></div>
+      <div class="stat"><div class="stat-value" id="statAvg">—</div><div class="stat-label">Avg</div></div>
+      <div class="stat"><div class="stat-value" id="statMax">—</div><div class="stat-label">Max</div></div>
+    </div>
+  </div>
+
+  <div class="main">
+    <div id="map"></div>
+    <aside class="sidebar">
+      <div class="panel">
+        <h2>How to read this</h2>
+        <div class="hint">
+          Choose a sex and a metric to recolor the map. Hover a municipality to inspect the full age profile and click to zoom to it.
+        </div>
+      </div>
+
+      <div class="panel info" id="infoPanel">
+        <div class="hint">Hover over an občina</div>
+      </div>
+
+      <div class="panel">
+        <h3>Age profile</h3>
+        <svg id="ageChart" class="chart" viewBox="0 0 320 310" preserveAspectRatio="xMinYMin meet"></svg>
+      </div>
+    </aside>
+
+    <div class="loading" id="loading"><div class="spinner"></div></div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const PALETTES = {
+  ember: ['#140b18', '#281028', '#45153e', '#671d55', '#8f2a66', '#b53d72', '#d95d73', '#f28f6b', '#ffc06b', '#fff0b1'],
+  ocean: ['#07111b', '#0c1b2b', '#12304a', '#17446b', '#1d5d8f', '#2d79b5', '#4f96d5', '#7eb6ee', '#aed7ff', '#e1f2ff'],
+  aurora: ['#0a1412', '#0f221d', '#143429', '#15513c', '#166e4d', '#1c8b62', '#37a27f', '#62c39e', '#98e2bb', '#d5ffe8'],
+};
+
+const SEX_OPTIONS = [
+  { value: '0', label: 'Skupaj' },
+  { value: '1', label: 'Moški' },
+  { value: '2', label: 'Ženske' },
+];
+
+const AGE_BUCKETS = [
+  '0-4 let', '5-9 let', '10-14 let', '15-19 let', '20-24 let', '25-29 let',
+  '30-34 let', '35-39 let', '40-44 let', '45-49 let', '50-54 let', '55-59 let',
+  '60-64 let', '65-69 let', '70-74 let', '75-79 let', '80-84 let', '85-89 let',
+  '90-94 let', '95-99 let', '100 + let',
+];
+
+const METRICS = {
+  total: {
+    label: 'Skupaj prebivalcev',
+    type: 'count',
+    buckets: AGE_BUCKETS,
+    color: 'ocean',
+  },
+  children: {
+    label: 'Otroci 0-14',
+    type: 'count',
+    buckets: AGE_BUCKETS.slice(0, 3),
+    color: 'aurora',
+  },
+  working: {
+    label: 'Delovno aktivni 15-64',
+    type: 'count',
+    buckets: AGE_BUCKETS.slice(3, 13),
+    color: 'ember',
+  },
+  seniors: {
+    label: 'Starejši 65+',
+    type: 'count',
+    buckets: AGE_BUCKETS.slice(13),
+    color: 'ember',
+  },
+  childrenShare: {
+    label: 'Delež otrok 0-14 (%)',
+    type: 'share',
+    buckets: AGE_BUCKETS.slice(0, 3),
+    color: 'aurora',
+  },
+  seniorsShare: {
+    label: 'Delež starejših 65+ (%)',
+    type: 'share',
+    buckets: AGE_BUCKETS.slice(13),
+    color: 'ember',
+  },
+};
+
+AGE_BUCKETS.forEach((bucket) => {
+  METRICS[`bucket:${bucket}`] = {
+    label: bucket,
+    type: 'count',
+    buckets: [bucket],
+    color: 'ocean',
+  };
+});
+
+let geojsonData = null;
+let geojsonLayer = null;
+let map;
+let legendControl;
+let datasets = {};
+let currentSex = '0';
+let currentMetric = 'childrenShare';
+let currentPalette = PALETTES.aurora;
+
+const numberFormatter = new Intl.NumberFormat('sl-SI', { maximumFractionDigits: 1 });
+const integerFormatter = new Intl.NumberFormat('sl-SI');
+
+function parseCSV(text) {
+  const cleaned = text.replace(/^\uFEFF/, '');
+  const lines = cleaned.split(/\r?\n/).filter((line) => line.trim());
+  if (!lines.length) return [];
+
+  const parseRow = (line) => {
+    const values = [];
+    let current = '';
+    let inQuotes = false;
+
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (ch === '"') {
+        inQuotes = !inQuotes;
+        continue;
+      }
+      if (ch === ',' && !inQuotes) {
+        values.push(current.trim());
+        current = '';
+        continue;
+      }
+      current += ch;
+    }
+
+    values.push(current.trim());
+    return values;
+  };
+
+  const headers = parseRow(lines[0]);
+  return lines.slice(1).map((line) => {
+    const values = parseRow(line);
+    const row = {};
+    headers.forEach((header, index) => {
+      row[header] = values[index] ?? '';
+    });
+    return row;
+  });
+}
+
+function fmt(value) {
+  if (value === null || value === undefined || Number.isNaN(value)) return '—';
+  if (Math.abs(value) >= 1e6) return `${numberFormatter.format(value / 1e6)}M`;
+  if (Math.abs(value) >= 1e4) return `${numberFormatter.format(value / 1e3)}K`;
+  return integerFormatter.format(value);
+}
+
+function fmtMetricValue(value, metric) {
+  if (value === null || value === undefined || Number.isNaN(value)) return '—';
+  if (metric.type === 'share') return `${numberFormatter.format(value)}%`;
+  return integerFormatter.format(Math.round(value));
+}
+
+function sanitizeNumber(raw) {
+  if (raw === null || raw === undefined) return null;
+  const text = String(raw).trim();
+  if (!text || text === '-' || text === '...' || text === 'z') return null;
+  const value = Number.parseFloat(text.replace(',', '.'));
+  return Number.isNaN(value) ? null : value;
+}
+
+function makeMunicipalityIndex(rows) {
+  const byMunicipality = {};
+  rows.forEach((row) => {
+    const obcina = Number.parseInt(row['Občina'], 10);
+    if (!byMunicipality[obcina]) byMunicipality[obcina] = {};
+    byMunicipality[obcina][row.Spol] = row;
+  });
+  return byMunicipality;
+}
+
+function rowForMunicipality(municipalityId, sex) {
+  const municipality = datasets.age?.data?.[municipalityId];
+  if (!municipality) return null;
+  return municipality[sex] || municipality['0'] || municipality['1'] || municipality['2'] || null;
+}
+
+function metricBuckets(metric) {
+  return METRICS[metric]?.buckets || [];
+}
+
+function rowBuckets(row) {
+  const buckets = {};
+  AGE_BUCKETS.forEach((bucket) => {
+    buckets[bucket] = sanitizeNumber(row?.[bucket]) ?? 0;
+  });
+  return buckets;
+}
+
+function metricValue(row, metric) {
+  if (!row) return null;
+  const buckets = rowBuckets(row);
+  const selected = metricBuckets(metric);
+  const total = sanitizeNumber(row['Starostne skupine - SKUPAJ']) ?? 0;
+  const sum = selected.reduce((acc, bucket) => acc + (buckets[bucket] ?? 0), 0);
+  if (METRICS[metric].type === 'share') return total > 0 ? (sum / total) * 100 : null;
+  return sum;
+}
+
+function valueForChartBucket(row, bucket) {
+  const buckets = rowBuckets(row);
+  return buckets[bucket] ?? 0;
+}
+
+function paletteForMetric(metric) {
+  return PALETTES[METRICS[metric]?.color || 'ocean'];
+}
+
+function interpolatePalette(palette, t) {
+  const clamped = Math.max(0, Math.min(1, t));
+  const scaled = clamped * (palette.length - 1);
+  const index = Math.floor(scaled);
+  const nextIndex = Math.min(index + 1, palette.length - 1);
+  const localT = scaled - index;
+
+  const hexToRgb = (hex) => {
+    const normalized = hex.replace('#', '');
+    return {
+      r: Number.parseInt(normalized.slice(0, 2), 16),
+      g: Number.parseInt(normalized.slice(2, 4), 16),
+      b: Number.parseInt(normalized.slice(4, 6), 16),
+    };
+  };
+
+  const rgbToHex = (r, g, b) => `#${[r, g, b].map((part) => Math.round(part).toString(16).padStart(2, '0')).join('')}`;
+  const start = hexToRgb(palette[index]);
+  const end = hexToRgb(palette[nextIndex]);
+  return rgbToHex(
+    start.r + (end.r - start.r) * localT,
+    start.g + (end.g - start.g) * localT,
+    start.b + (end.b - start.b) * localT,
+  );
+}
+
+function getColor(value, min, max, palette) {
+  if (value === null || Number.isNaN(value)) return '#152130';
+  if (max === min) return palette[Math.floor(palette.length / 2)];
+  const t = (value - min) / (max - min);
+  return interpolatePalette(palette, t);
+}
+
+function buildMetricOptions() {
+  const metricSelect = document.getElementById('metricSelect');
+  metricSelect.innerHTML = '';
+
+  const groups = [
+    {
+      label: 'Core metrics',
+      items: ['total', 'children', 'working', 'seniors', 'childrenShare', 'seniorsShare'],
+    },
+    {
+      label: 'Age buckets',
+      items: AGE_BUCKETS.map((bucket) => `bucket:${bucket}`),
+    },
+  ];
+
+  groups.forEach((group) => {
+    const optgroup = document.createElement('optgroup');
+    optgroup.label = group.label;
+    group.items.forEach((key) => {
+      const option = document.createElement('option');
+      option.value = key;
+      option.textContent = METRICS[key].label;
+      optgroup.appendChild(option);
+    });
+    metricSelect.appendChild(optgroup);
+  });
+
+  metricSelect.value = currentMetric;
+}
+
+function buildSexOptions() {
+  const sexSelect = document.getElementById('sexSelect');
+  sexSelect.innerHTML = '';
+  SEX_OPTIONS.forEach((optionData) => {
+    const option = document.createElement('option');
+    option.value = optionData.value;
+    option.textContent = optionData.label;
+    sexSelect.appendChild(option);
+  });
+  sexSelect.value = currentSex;
+}
+
+function updateHeaderStats(values, metric) {
+  if (!values.length) {
+    document.getElementById('statMin').textContent = '—';
+    document.getElementById('statAvg').textContent = '—';
+    document.getElementById('statMax').textContent = '—';
+    return;
+  }
+
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const avg = values.reduce((acc, value) => acc + value, 0) / values.length;
+  document.getElementById('statMin').textContent = fmtMetricValue(min, metric);
+  document.getElementById('statAvg').textContent = fmtMetricValue(avg, metric);
+  document.getElementById('statMax').textContent = fmtMetricValue(max, metric);
+}
+
+function updateLegend(min, max, metric) {
+  const palette = currentPalette;
+  const steps = 6;
+  let html = `<div class="legend-title">${metric.label} range</div>`;
+
+  for (let i = steps - 1; i >= 0; i--) {
+    const lo = min + ((max - min) * i) / steps;
+    const hi = min + ((max - min) * (i + 1)) / steps;
+    html += `
+      <div class="legend-row">
+        <div class="swatch" style="background:${palette[Math.min(i, palette.length - 1)]}"></div>
+        <div class="legend-label">${fmtMetricValue(lo, metric)} – ${fmtMetricValue(hi, metric)}</div>
+      </div>`;
+  }
+
+  legendControl._div.innerHTML = html;
+}
+
+function renderInfo(row, municipalityFeature) {
+  const infoPanel = document.getElementById('infoPanel');
+  if (!row || !municipalityFeature) {
+    infoPanel.innerHTML = '<div class="hint">Hover over an občina</div>';
+    renderChart(null, currentMetric);
+    return;
+  }
+
+  const metric = METRICS[currentMetric];
+  const total = sanitizeNumber(row['Starostne skupine - SKUPAJ']) ?? 0;
+  const metricVal = metricValue(row, currentMetric);
+  const buckets = rowBuckets(row);
+
+  const topBucket = AGE_BUCKETS.reduce((best, bucket) => {
+    return (buckets[bucket] ?? 0) > (buckets[best] ?? 0) ? bucket : best;
+  }, AGE_BUCKETS[0]);
+
+  const sexLabel = SEX_OPTIONS.find((option) => option.value === currentSex)?.label || currentSex;
+
+  infoPanel.innerHTML = `
+    <div class="hint">${sexLabel} · ${row.Polletje || '—'}</div>
+    <div class="detail-name">${municipalityFeature.properties.OB_UIME}</div>
+    <div class="detail-value">${fmtMetricValue(metricVal, metric)}<small>${metric.label}</small></div>
+    <div class="detail-meta">
+      Skupaj prebivalcev: ${fmt(total)}<br>
+      Najmočnejši starostni razred: ${topBucket} (${fmtMetricValue(buckets[topBucket], METRICS.total)})<br>
+      Občina ID: ${municipalityFeature.properties.OB_ID}<br>
+      Površina: ${municipalityFeature.properties.POV_KM2} km²
+    </div>`;
+
+  renderChart(row, currentMetric);
+}
+
+function renderChart(row, metricKey) {
+  const svg = document.getElementById('ageChart');
+  if (!row) {
+    svg.innerHTML = `
+      <text x="16" y="36" fill="#8ea0bd" font-size="12">Hover a municipality to see the age profile.</text>
+    `;
+    return;
+  }
+
+  const buckets = AGE_BUCKETS.map((bucket) => ({ bucket, value: valueForChartBucket(row, bucket) }));
+  const maxValue = Math.max(...buckets.map((entry) => entry.value), 1);
+  const labelX = 6;
+  const chartX = 112;
+  const chartWidth = 186;
+  const rowHeight = 12;
+  const rowGap = 3;
+  const startY = 18;
+
+  const lines = [];
+  lines.push(`<text x="${chartX}" y="12" fill="#8ea0bd" font-size="10" font-weight="700">Age buckets</text>`);
+  lines.push(`<line x1="${chartX}" y1="18" x2="${chartX}" y2="300" stroke="rgba(145,165,200,0.18)" stroke-width="1" />`);
+  lines.push(`<line x1="${chartX + chartWidth}" y1="18" x2="${chartX + chartWidth}" y2="300" stroke="rgba(145,165,200,0.08)" stroke-width="1" />`);
+
+  buckets.forEach((entry, index) => {
+    const y = startY + index * (rowHeight + rowGap);
+    const width = (entry.value / maxValue) * chartWidth;
+    const fill = interpolatePalette(PALETTES[METRICS[metricKey].color || 'ocean'], entry.value / maxValue);
+    lines.push(`<text class="bar-label" x="${labelX}" y="${y + 9}">${entry.bucket}</text>`);
+    lines.push(`<rect x="${chartX}" y="${y}" width="${width}" height="${rowHeight}" rx="5" fill="${fill}" />`);
+    lines.push(`<text class="bar-value" x="${chartX + chartWidth + 6}" y="${y + 9}">${fmt(entry.value)}</text>`);
+  });
+
+  svg.innerHTML = lines.join('');
+}
+
+function renderMap() {
+  const metric = METRICS[currentMetric];
+  currentPalette = paletteForMetric(currentMetric);
+  const values = [];
+
+  geojsonData.features.forEach((feature) => {
+    const row = rowForMunicipality(feature.properties.OB_ID, currentSex);
+    const value = metricValue(row, currentMetric);
+    if (value !== null && !Number.isNaN(value)) values.push(value);
+  });
+
+  updateHeaderStats(values, metric);
+
+  const min = values.length ? Math.min(...values) : 0;
+  const max = values.length ? Math.max(...values) : 1;
+  updateLegend(min, max, metric);
+
+  if (geojsonLayer) map.removeLayer(geojsonLayer);
+
+  geojsonLayer = L.geoJSON(geojsonData, {
+    style: (feature) => {
+      const row = rowForMunicipality(feature.properties.OB_ID, currentSex);
+      const value = metricValue(row, currentMetric);
+      return {
+        fillColor: getColor(value, min, max, currentPalette),
+        fillOpacity: 0.86,
+        color: 'rgba(145, 165, 200, 0.28)',
+        weight: 1,
+        opacity: 0.8,
+      };
+    },
+    onEachFeature: (feature, layer) => {
+      layer.on({
+        mouseover: (event) => {
+          event.target.setStyle({
+            weight: 2.4,
+            color: '#d8e4ff',
+            fillOpacity: 0.96,
+          });
+          event.target.bringToFront();
+
+          const row = rowForMunicipality(feature.properties.OB_ID, currentSex);
+          renderInfo(row, feature);
+        },
+        mouseout: (event) => {
+          geojsonLayer.resetStyle(event.target);
+          document.getElementById('infoPanel').innerHTML = '<div class="hint">Hover over an občina</div>';
+          renderChart(null, currentMetric);
+        },
+        click: (event) => {
+          map.fitBounds(event.target.getBounds(), { padding: [36, 36] });
+        },
+      });
+    },
+  }).addTo(map);
+}
+
+function populateControls() {
+  buildSexOptions();
+  buildMetricOptions();
+}
+
+function bindEvents() {
+  document.getElementById('sexSelect').addEventListener('change', (event) => {
+    currentSex = event.target.value;
+    renderMap();
+  });
+
+  document.getElementById('metricSelect').addEventListener('change', (event) => {
+    currentMetric = event.target.value;
+    currentPalette = paletteForMetric(currentMetric);
+    renderMap();
+  });
+}
+
+async function loadAll() {
+  const [geoRes, ageRes] = await Promise.all([
+    fetch('15min-slo/obcine.geojson').then((response) => response.json()),
+    fetch('obcine_age_distribution.csv').then((response) => response.text()),
+  ]);
+
+  geojsonData = geoRes;
+  const rows = parseCSV(ageRes);
+  datasets.age = {
+    rows,
+    data: makeMunicipalityIndex(rows),
+  };
+
+  populateControls();
+  bindEvents();
+  renderMap();
+  renderChart(rows[0] || null, currentMetric);
+  document.getElementById('loading').classList.add('hidden');
+}
+
+map = L.map('map', {
+  zoomControl: true,
+  attributionControl: true,
+  scrollWheelZoom: true,
+}).setView([46.15, 14.99], 8.4);
+
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png', {
+  maxZoom: 18,
+}).addTo(map);
+
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png', {
+  maxZoom: 18,
+  pane: 'overlayPane',
+}).addTo(map);
+
+legendControl = L.control({ position: 'bottomright' });
+legendControl.onAdd = function onAdd() {
+  this._div = L.DomUtil.create('div', 'legend');
+  return this._div;
+};
+legendControl.addTo(map);
+
+loadAll().catch((error) => {
+  console.error(error);
+  document.getElementById('loading').innerHTML = '<div class="panel"><h3>Failed to load data</h3><div class="hint">Check the local file server and the CSV/GeoJSON paths.</div></div>';
+});
+</script>
+</body>
+</html>
