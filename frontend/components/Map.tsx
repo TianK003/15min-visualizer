@@ -484,8 +484,11 @@ export default function SloveniaMap() {
   );
 
   const gradientMesh = useMemo(
-    () => buildGradientMesh(aggregatedScores, mode),
-    [aggregatedScores, mode],
+    () =>
+      !showObcineFill && view === "15min"
+        ? buildGradientMesh(aggregatedScores, mode)
+        : { positions: new Float32Array(), colors: new Uint8Array(), vertexCount: 0 },
+    [aggregatedScores, mode, showObcineFill, view],
   );
 
   const animatedPaths = useMemo(
@@ -588,6 +591,8 @@ export default function SloveniaMap() {
           data: aggregatedScores,
           pickable: true,
           stroked: false,
+          // filled: true is required — deck.gl needs the polygon for picking
+          // geometry even though we make it transparent below.
           filled: true,
           extruded: false,
           getHexagon: (d) => d.h3,
