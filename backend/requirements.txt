@@ -1,0 +1,28 @@
+# Core geospatial
+geopandas>=1.0
+shapely>=2.0
+pyproj>=3.6
+fiona>=1.9
+
+# OSM parsing (PyPI distribution renamed from `pyosmium` to `osmium` in the 4.x series;
+# the Python import path is still `import osmium`)
+osmium>=4.0
+
+# H3 indexing
+h3>=4.0
+
+# HTTP + async
+httpx>=0.27
+aiohttp>=3.9
+requests>=2.32
+
+# Database
+psycopg[binary]>=3.2
+sqlalchemy>=2.0
+geoalchemy2>=0.15
+
+# Config
+python-dotenv>=1.0
+
+# Dev / debugging
+ipython>=8.0
