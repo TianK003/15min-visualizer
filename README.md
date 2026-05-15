@@ -1,4 +1,4 @@
-# 15min Slovenija
+# Ekipa: GEOGuessr
 
 An interactive map showing how much of Slovenia is a true 15-minute neighborhood — every populated H3 cell scored 0–8 on walking access to the daily amenities people actually need, aggregated up to občine for the country view.
 

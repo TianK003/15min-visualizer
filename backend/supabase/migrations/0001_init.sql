@@ -35,7 +35,7 @@ create table if not exists cell_scores (
   score           smallint not null check (score between 0 and 8),
   walk_min        smallint[] not null,    -- 8 elements, one per category
   bike_min        smallint[] not null,    -- walk_min / 2.5
-  population      integer
+  population      real
 );
 create index if not exists cell_scores_score_ix on cell_scores (score);
 

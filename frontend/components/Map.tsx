@@ -9,11 +9,27 @@ import { GeoJsonLayer } from "@deck.gl/layers";
 import { HeatmapLayer } from "@deck.gl/aggregation-layers";
 import { H3HexagonLayer } from "@deck.gl/geo-layers";
 import * as h3 from "h3-js";
+import Scorecard from "@/components/Scorecard";
+import AddressSearch from "@/components/AddressSearch";
+import IzvorPodatkov from "@/components/IzvorPodatkov";
 
 const BASEMAP_STYLE = "https://tiles.openfreemap.org/styles/positron";
-const OBCINE_URL = "/data/obcine_scored.geojson";
-const SCORES_URL = "/data/cell_scores_lite.json";
-const POPULATION_URL = "/data/cell_population_lite.json";
+
+// Data source switch: when NEXT_PUBLIC_USE_REMOTE_DATA="true", read from
+// the Supabase Storage URLs (live backend). Otherwise fall back to the
+// static files under public/data/ — keeps dev working without supabase.
+const REMOTE_DATA = process.env.NEXT_PUBLIC_USE_REMOTE_DATA === "true";
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
+const STORAGE = `${SUPABASE_URL}/storage/v1/object/public`;
+const OBCINE_URL = REMOTE_DATA
+  ? `${STORAGE}/overlays/obcine_scored.geojson`
+  : "/data/obcine_scored.geojson";
+const SCORES_URL = REMOTE_DATA
+  ? `${STORAGE}/cells/cell_scores_lite.json`
+  : "/data/cell_scores_lite.json";
+const POPULATION_URL = REMOTE_DATA
+  ? `${STORAGE}/overlays/cell_population_lite.json`
+  : "/data/cell_population_lite.json";
 
 const SLOVENIA_CENTER: [number, number] = [14.99, 46.15];
 const INITIAL_ZOOM = 7.5;
@@ -35,14 +51,12 @@ type ScoreCell = { h3: string; score: number };
 type PopCell = { h3: string; pop: number };
 type PopPoint = { position: [number, number]; pop: number };
 
-// Map viewport zoom → H3 aggregation resolution.
-// Only consulted at zoom ≥ SHOW_OBCINE_FILL_BELOW; below that, the občina layer takes over.
 function zoomToResolution(zoom: number): number {
-  if (zoom < 10) return 6;  // ~450 hexes — smooth handoff from občine
-  if (zoom < 11) return 7;  // ~3k mid hexes (region)
-  if (zoom < 13) return 8;  // ~22k hexes (city)
-  if (zoom < 15) return 9;  // ~154k district/street
-  return 10;                // ~1.08M raw (house-block, 66m edge)
+  if (zoom < 10) return 6;
+  if (zoom < 11) return 7;
+  if (zoom < 13) return 8;
+  if (zoom < 15) return 9;
+  return 10;
 }
 
 function aggregateMean(cells: ScoreCell[], targetRes: number): ScoreCell[] {
@@ -59,7 +73,7 @@ function aggregateMean(cells: ScoreCell[], targetRes: number): ScoreCell[] {
     }
   }
   const out: ScoreCell[] = [];
-  groups.forEach((g, h) => out.push({ h3: h, score: g.sum / g.count }));
+  groups.forEach((g, hex) => out.push({ h3: hex, score: g.sum / g.count }));
   return out;
 }
 
@@ -72,8 +86,6 @@ function colorForScore(score: number): Rgba {
   return [239, 68, 68, 128];
 }
 
-// Magma palette used by the HeatmapLayer's colorRange. RGB triples only
-// (HeatmapLayer applies its own alpha based on density).
 const HEATMAP_COLOR_RANGE: Array<[number, number, number]> = [
   [20, 14, 54],
   [70, 16, 110],
@@ -102,17 +114,55 @@ type ObcinaProps = {
   n_cells?: number;
 };
 
+// ---------- Permalink (G4) ----------
+type ViewState = { lng: number; lat: number; zoom: number; h3id: string | null };
+
+function readHash(): Partial<ViewState> {
+  if (typeof window === "undefined") return {};
+  const h = window.location.hash.replace(/^#/, "");
+  if (!h) return {};
+  const params = new URLSearchParams(h);
+  const lng = parseFloat(params.get("lng") || "");
+  const lat = parseFloat(params.get("lat") || "");
+  const zoom = parseFloat(params.get("z") || "");
+  const h3id = params.get("h3");
+  return {
+    lng: Number.isFinite(lng) ? lng : undefined,
+    lat: Number.isFinite(lat) ? lat : undefined,
+    zoom: Number.isFinite(zoom) ? zoom : undefined,
+    h3id: h3id || null,
+  };
+}
+
+function writeHash(v: ViewState): void {
+  const params = new URLSearchParams();
+  params.set("lng", v.lng.toFixed(4));
+  params.set("lat", v.lat.toFixed(4));
+  params.set("z", v.zoom.toFixed(2));
+  if (v.h3id) params.set("h3", v.h3id);
+  const next = `#${params.toString()}`;
+  if (next !== window.location.hash) {
+    window.history.replaceState(null, "", next);
+  }
+}
+
 export default function SloveniaMap() {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const overlayRef = useRef<MapboxOverlay | null>(null);
 
+  const selectedH3Ref = useRef<string | null>(null);
   const [view, setView] = useState<View>("15min");
   const [cells, setCells] = useState<ScoreCell[]>([]);
+  const [cellsLoading, setCellsLoading] = useState(true);
+  const [cellsError, setCellsError] = useState<string | null>(null);
   const [pops, setPops] = useState<PopCell[]>([]);
   const [popsLoading, setPopsLoading] = useState(false);
   const [zoom, setZoom] = useState<number>(INITIAL_ZOOM);
   const [usingDummy, setUsingDummy] = useState<boolean>(false);
+  const [selectedH3, setSelectedH3] = useState<string | null>(null);
+  const [isoFeature, setIsoFeature] = useState<GeoJSON.Feature | null>(null);
+  const [provenanceOpen, setProvenanceOpen] = useState(false);
 
   // Fetch real scores; fall back to dummy if not yet baked.
   useEffect(() => {
@@ -125,6 +175,7 @@ export default function SloveniaMap() {
         if (!cancelled) {
           setCells(data);
           setUsingDummy(false);
+          setCellsError(null);
           // eslint-disable-next-line no-console
           console.log(`Loaded ${data.length.toLocaleString()} real cells`);
         }
@@ -134,7 +185,10 @@ export default function SloveniaMap() {
           console.warn("Falling back to dummy hexes:", err);
           setCells(generateDummyCells());
           setUsingDummy(true);
+          setCellsError(err instanceof Error ? err.message : String(err));
         }
+      } finally {
+        if (!cancelled) setCellsLoading(false);
       }
     })();
     return () => {
@@ -142,10 +196,7 @@ export default function SloveniaMap() {
     };
   }, []);
 
-  // Lazy-load the population layer the first time the user switches to it.
-  // Deps deliberately exclude `popsLoading` — including it caused React to
-  // tear down the effect (and flip `cancelled = true`) the moment we called
-  // setPopsLoading(true), aborting our own in-flight fetch.
+  // Lazy-load population on first switch. Deps deliberately omit popsLoading.
   useEffect(() => {
     if (view !== "population" || pops.length > 0) return;
     let cancelled = false;
@@ -155,14 +206,10 @@ export default function SloveniaMap() {
         const res = await fetch(POPULATION_URL);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data: PopCell[] = await res.json();
-        if (!cancelled) {
-          setPops(data);
-          // eslint-disable-next-line no-console
-          console.log(`Loaded ${data.length.toLocaleString()} population cells`);
-        }
+        if (!cancelled) setPops(data);
       } catch (err) {
         // eslint-disable-next-line no-console
-        console.warn("Population layer fetch failed:", err);
+        console.warn("Population fetch failed:", err);
       } finally {
         if (!cancelled) setPopsLoading(false);
       }
@@ -172,15 +219,23 @@ export default function SloveniaMap() {
     };
   }, [view, pops.length]);
 
-  // Initialize map once.
+  // Initialize map once. Restore from URL hash if present.
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
+
+    const restored = readHash();
+    const center: [number, number] =
+      restored.lng !== undefined && restored.lat !== undefined
+        ? [restored.lng, restored.lat]
+        : SLOVENIA_CENTER;
+    const zoomInit = restored.zoom ?? INITIAL_ZOOM;
+    if (restored.h3id) setSelectedH3(restored.h3id);
 
     const map = new maplibregl.Map({
       container: containerRef.current,
       style: BASEMAP_STYLE,
-      center: SLOVENIA_CENTER,
-      zoom: INITIAL_ZOOM,
+      center,
+      zoom: zoomInit,
     });
     mapRef.current = map;
 
@@ -188,28 +243,43 @@ export default function SloveniaMap() {
     overlayRef.current = overlay;
     map.addControl(overlay as unknown as maplibregl.IControl);
 
-    const onZoom = () => setZoom(map.getZoom());
-    map.on("zoom", onZoom);
+    const sync = () => {
+      const c = map.getCenter();
+      const z = map.getZoom();
+      setZoom(z);
+      writeHash({ lng: c.lng, lat: c.lat, zoom: z, h3id: selectedH3Ref.current });
+    };
+    map.on("zoom", sync);
+    map.on("moveend", sync);
 
     return () => {
-      map.off("zoom", onZoom);
+      map.off("zoom", sync);
+      map.off("moveend", sync);
       map.remove();
       mapRef.current = null;
       overlayRef.current = null;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Mirror selectedH3 into both the ref (for the closure-captured sync
+  // handler) and the URL hash.
+  useEffect(() => {
+    selectedH3Ref.current = selectedH3;
+    const map = mapRef.current;
+    if (!map) return;
+    const c = map.getCenter();
+    writeHash({ lng: c.lng, lat: c.lat, zoom: map.getZoom(), h3id: selectedH3 });
+  }, [selectedH3]);
 
   const showObcineFill = zoom < SHOW_OBCINE_FILL_BELOW;
   const currentRes = zoomToResolution(zoom);
 
-  // Skip the score-hex aggregation while we're in občina mode.
   const aggregatedScores = useMemo(
     () => (showObcineFill ? [] : aggregateMean(cells, currentRes)),
     [cells, currentRes, showObcineFill],
   );
 
-  // Convert H3 cells → centroid points once. HeatmapLayer eats points + weights
-  // and does Gaussian density smoothing on the GPU.
   const popPoints = useMemo<PopPoint[]>(() => {
     if (pops.length === 0) return [];
     const out: PopPoint[] = new Array(pops.length);
@@ -220,7 +290,6 @@ export default function SloveniaMap() {
     return out;
   }, [pops]);
 
-  // Push layers whenever data or mode changes.
   useEffect(() => {
     const overlay = overlayRef.current;
     if (!overlay) return;
@@ -228,8 +297,6 @@ export default function SloveniaMap() {
     const layers: Layer[] = [];
 
     if (view === "population") {
-      // Single soft heatmap at every zoom — kernel size is in screen pixels,
-      // so it auto-adapts. No občina fill, no hex outlines, no picking.
       layers.push(
         new HeatmapLayer<PopPoint>({
           id: "population-heat",
@@ -255,16 +322,7 @@ export default function SloveniaMap() {
           getFillColor: (f) => colorForScore(f.properties?.mean_score ?? 0),
           getLineColor: [60, 60, 60, 200],
           lineWidthMinPixels: 1,
-          pickable: true,
-          onClick: ({ object }) => {
-            const p: ObcinaProps | undefined = (object as { properties?: ObcinaProps } | null)?.properties;
-            if (p) {
-              // eslint-disable-next-line no-console
-              console.log(
-                `${p.OB_UIME}: mean_score=${p.mean_score}, population=${p.population?.toLocaleString()}, cells=${p.n_cells}`,
-              );
-            }
-          },
+          pickable: false,
         }),
       );
     } else {
@@ -281,8 +339,7 @@ export default function SloveniaMap() {
         new H3HexagonLayer<ScoreCell>({
           id: "scores",
           data: aggregatedScores,
-          // Drop outlines + hover picking once cell counts get heavy (res ≥ 9 ≈ zoom ≥ 13).
-          pickable: currentRes < 9,
+          pickable: true, // click-only (no onHover) — perf hit acceptable
           stroked: currentRes < 9,
           filled: true,
           extruded: false,
@@ -293,21 +350,51 @@ export default function SloveniaMap() {
           getLineWidth: 1,
           updateTriggers: { getFillColor: aggregatedScores },
           onClick: ({ object }) => {
-            if (object) {
-              // eslint-disable-next-line no-console
-              console.log("hex click:", object.h3, "score:", object.score);
-            }
+            if (!object) return;
+            // Convert aggregated h3 to a representative res-10 child for
+            // scorecard fetch; if already res-10 use as-is.
+            const target =
+              h3.getResolution(object.h3) >= H3_BASE_RES
+                ? object.h3
+                : h3.cellToChildren(object.h3, H3_BASE_RES)[0];
+            setSelectedH3(target);
           },
         }),
       );
     }
 
+    if (isoFeature) {
+      layers.push(
+        new GeoJsonLayer({
+          id: "isochrone",
+          data: isoFeature as GeoJSON.Feature,
+          stroked: true,
+          filled: true,
+          getFillColor: [56, 189, 248, 60],
+          getLineColor: [14, 116, 144, 220],
+          lineWidthMinPixels: 2,
+          pickable: false,
+        }),
+      );
+    }
+
     overlay.setProps({ layers });
-  }, [aggregatedScores, popPoints, showObcineFill, currentRes, view]);
+  }, [aggregatedScores, popPoints, showObcineFill, currentRes, view, isoFeature]);
+
+  const flyToCoord = (lng: number, lat: number, targetZoom = 14) => {
+    const map = mapRef.current;
+    if (!map) return;
+    map.flyTo({ center: [lng, lat], zoom: targetZoom, duration: 1200 });
+    setTimeout(() => {
+      setSelectedH3(h3.latLngToCell(lat, lng, H3_BASE_RES));
+    }, 200);
+  };
 
   return (
     <>
       <div id="map-root" ref={containerRef} />
+
+      <AddressSearch onPick={flyToCoord} />
 
       <div className="zoom-indicator" aria-hidden>
         zoom <b>{zoom.toFixed(1)}</b> ·{" "}
@@ -350,9 +437,7 @@ export default function SloveniaMap() {
             <span>redko</span>
             <span>pogosto</span>
           </div>
-          {popsLoading && (
-            <div className="legend-pop-scale">nalagam …</div>
-          )}
+          {popsLoading && <div className="legend-pop-scale">nalagam …</div>}
         </div>
       )}
 
@@ -375,11 +460,31 @@ export default function SloveniaMap() {
         </button>
       </div>
 
-      {usingDummy && (
+      <Scorecard
+        h3id={selectedH3}
+        onClose={() => setSelectedH3(null)}
+        onIsochrone={setIsoFeature}
+      />
+
+      <button
+        type="button"
+        className="provenance-link"
+        onClick={() => setProvenanceOpen(true)}
+        aria-label="Od kod podatki?"
+      >
+        Od kod podatki?
+      </button>
+      {provenanceOpen && <IzvorPodatkov onClose={() => setProvenanceOpen(false)} />}
+
+      {cellsLoading && (
+        <div className="loading-banner" role="status" aria-live="polite">
+          Nalagam podatke …
+        </div>
+      )}
+
+      {usingDummy && cellsError && (
         <div className="banner">
-          Showing dummy Ljubljana hexes — bake not yet complete. Refresh once
-          <code> cell_scores_lite.json </code>
-          lands.
+          Podatki s strežnika niso dosegljivi ({cellsError}). Prikazane so vzorčne celice.
         </div>
       )}
     </>

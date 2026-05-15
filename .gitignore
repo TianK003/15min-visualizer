@@ -37,6 +37,10 @@ data/15min-slo/*.pbf
 data/15min-slo/*.gpkg
 data/15min-slo/*.jsonl
 data/15min-slo/cell_scores.json
+data/15min-slo/tiles/
+
+# TypeScript build cache
+**/*.tsbuildinfo
 # (keep the smaller geojsons checked in for now; remove these lines to ignore them too)
 # data/15min-slo/*.geojson
 
