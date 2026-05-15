@@ -22,6 +22,10 @@ type Mode = "walk" | "bike";
 type Props = {
   h3id: string | null;
   mode: Mode;
+  /** Optional override for the routing origin. When set (e.g. from address
+   *  search) the iso/amenity/route fetches use this exact point instead of
+   *  the H3 cell centroid. The score itself remains a cell property. */
+  originLngLat?: [number, number] | null;
   onClose: () => void;
   onIsochrone: (poly: GeoJSON.Feature | null) => void;
   onRoute: (set: RouteSet | null) => void;
@@ -68,7 +72,7 @@ function pointInFeature(lng: number, lat: number, f: GeoJSON.Feature): boolean {
 }
 
 export default function Scorecard({
-  h3id, mode, onClose, onIsochrone, onRoute, onAmenities,
+  h3id, mode, originLngLat, onClose, onIsochrone, onRoute, onAmenities,
 }: Props) {
   const [cell, setCell] = useState<CellScoreRow | null>(null);
   const [amenities, setAmenities] = useState<AmenityByMode>(EMPTY_AMENITIES);
@@ -81,7 +85,15 @@ export default function Scorecard({
   const [activeCat, setActiveCat] = useState<CategoryId | null>(null);
   const [routeLoading, setRouteLoading] = useState<CategoryId | null>(null);
 
-  // Fetch cell + both amenity sets whenever the selected h3 changes.
+  // Routing origin: use the exact address point when provided, otherwise the
+  // cell centroid. The score still belongs to the cell (h3id) — only the
+  // iso/amenity/route fetches snap to this point.
+  const origin = useMemo<[number, number]>(() => {
+    if (originLngLat) return [originLngLat[1], originLngLat[0]]; // [lat, lng]
+    return h3id ? h3.cellToLatLng(h3id) : [0, 0];
+  }, [originLngLat, h3id]);
+
+  // Fetch cell + both amenity sets whenever the selected h3 or origin changes.
   useEffect(() => {
     if (!h3id) {
       setCell(null);
@@ -94,7 +106,7 @@ export default function Scorecard({
     setError(null);
     (async () => {
       try {
-        const [lat, lng] = h3.cellToLatLng(h3id);
+        const [lat, lng] = origin;
         const [c, walkAm, bikeAm] = await Promise.all([
           cellScore(h3id),
           amenitiesForPoint(lat, lng, "pedestrian").catch(() => [] as AmenityForPoint[]),
@@ -116,11 +128,12 @@ export default function Scorecard({
     return () => {
       cancelled = true;
     };
-  }, [h3id]);
+  }, [h3id, origin]);
 
-  // Reset all isochrone/route state when the cell changes. Deps intentionally
-  // exclude the callbacks — they're inline in the parent and would recreate
-  // on every render, retriggering this effect and clobbering isoVisible.
+  // Reset all isochrone/route state when the cell or origin changes. Deps
+  // intentionally exclude the callbacks — they're inline in the parent and
+  // would recreate on every render, retriggering this effect and clobbering
+  // isoVisible.
   useEffect(() => {
     setIsos({ walk: null, bike: null });
     setIsoFetched(false);
@@ -130,7 +143,7 @@ export default function Scorecard({
     onRoute(null);
     onAmenities(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [h3id]);
+  }, [h3id, origin]);
 
   // Filter both amenity sets to the user-centered iso polygon so the dots,
   // the <details> list, and the routes drawn on category-click stay in sync
@@ -169,7 +182,7 @@ export default function Scorecard({
     }
     setIsoLoading(true);
     try {
-      const [lat, lng] = h3.cellToLatLng(h3id);
+      const [lat, lng] = origin;
       const [walk, bike] = await Promise.all([
         isochrone({ lat, lng, minutes: 15, costing: "pedestrian" }),
         isochrone({ lat, lng, minutes: 15, costing: "bicycle" }),
@@ -190,7 +203,7 @@ export default function Scorecard({
     if (activeAmenities.length === 0) return;
     const targets = activeAmenities.filter((a) => a.category === cat).slice(0, MAX_PATHS_PER_CATEGORY);
     if (targets.length === 0) return;
-    const [lat, lng] = h3.cellToLatLng(h3id);
+    const [lat, lng] = origin;
     const costing = mode === "bike" ? "bicycle" : "pedestrian";
     setRouteLoading(cat);
     try {

@@ -144,11 +144,12 @@ body {
   font-size: 13px;
 }
 
-/* Global Hoja/Kolo toggle — stacked above .view-switch, only in 15-min view. */
+/* Global Hoja/Kolo toggle — stacked above .view-switch AND above .chat-toggle
+   (which is fixed at bottom:80px height ~43px, so we sit at ~bottom:130px). */
 .mode-toggle-global {
   position: absolute;
   right: 16px;
-  bottom: 60px;
+  bottom: 130px;
   background: rgba(255, 255, 255, 0.92);
   padding: 4px;
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.12);

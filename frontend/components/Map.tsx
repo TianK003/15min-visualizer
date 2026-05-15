@@ -10,7 +10,7 @@ import { HeatmapLayer } from "@deck.gl/aggregation-layers";
 import { H3HexagonLayer } from "@deck.gl/geo-layers";
 import * as h3 from "h3-js";
 import Scorecard, { type RouteSet, type RoutePath } from "@/components/Scorecard";
-import AddressSearch from "@/components/AddressSearch";
+import AddressSearch, { type AddressSearchHandle } from "@/components/AddressSearch";
 import IzvorPodatkov from "@/components/IzvorPodatkov";
 import { categoryById } from "@/lib/categories";
 import type { AmenityForPoint } from "@/lib/supabase";
@@ -185,6 +185,12 @@ export default function SloveniaMap() {
   const [hoveredAmenity, setHoveredAmenity] = useState<AmenityForPoint | null>(null);
   const [provenanceOpen, setProvenanceOpen] = useState(false);
   const [mode, setMode] = useState<Mode>("walk");
+  // When set, the Scorecard routes from this exact point instead of the cell
+  // centroid. fromAddress distinguishes address-bar picks (which should clear
+  // the input on Scorecard close) from ChatBox-driven picks.
+  const [originLngLat, setOriginLngLat] = useState<[number, number] | null>(null);
+  const [originFromAddress, setOriginFromAddress] = useState(false);
+  const addressSearchRef = useRef<AddressSearchHandle | null>(null);
 
   // Fetch real scores; fall back to dummy if not yet baked.
   useEffect(() => {
@@ -386,6 +392,9 @@ export default function SloveniaMap() {
               h3.getResolution(object.h3) >= H3_BASE_RES
                 ? object.h3
                 : h3.cellToChildren(object.h3, H3_BASE_RES)[0];
+            // Tile click drops any address anchor — route from cell centroid.
+            setOriginLngLat(null);
+            setOriginFromAddress(false);
             setSelectedH3(target);
           },
         }),
@@ -472,7 +481,47 @@ export default function SloveniaMap() {
       );
     }
 
-    if (hoveredAmenity) {
+    // Origin marker (🏠) — shown whenever paths to amenities are active, so
+    // the user can see exactly where the paths start from. Position is the
+    // address point if available, else the cell centroid.
+    if (selectedH3 && routeSet && routeSet.paths.length > 0) {
+      const [oLat, oLng] = originLngLat
+        ? [originLngLat[1], originLngLat[0]]
+        : h3.cellToLatLng(selectedH3);
+      const originPos: [number, number] = [oLng, oLat];
+      layers.push(
+        new ScatterplotLayer<{ position: [number, number] }>({
+          id: "origin-pin-bg",
+          data: [{ position: originPos }],
+          getPosition: (d) => d.position,
+          getFillColor: [14, 165, 233, 240], // sky-500
+          getRadius: 16,
+          radiusUnits: "pixels",
+          radiusMinPixels: 14,
+          stroked: true,
+          getLineColor: [255, 255, 255, 240],
+          lineWidthMinPixels: 2,
+          pickable: false,
+        }),
+        new TextLayer<{ position: [number, number] }>({
+          id: "origin-pin",
+          data: [{ position: originPos }],
+          getText: () => "🏠",
+          getPosition: (d) => d.position,
+          getSize: 18,
+          getAlignmentBaseline: "center",
+          getTextAnchor: "middle",
+          characterSet: "auto",
+          pickable: false,
+        }),
+      );
+    }
+
+    // When a category is selected (routeSet is active), suppress hover labels
+    // for non-matching categories — only the active category's dots show names.
+    const showHoverLabel =
+      hoveredAmenity && (!routeSet || hoveredAmenity.category === routeSet.categoryId);
+    if (showHoverLabel) {
       layers.push(
         new TextLayer<AmenityForPoint>({
           id: "amenity-hover-label",
@@ -499,14 +548,16 @@ export default function SloveniaMap() {
     }
 
     overlay.setProps({ layers });
-  }, [aggregatedScores, popPoints, showObcineFill, currentRes, view, isoFeature, routeSet, amenityDots, hoveredAmenity, mode]);
+  }, [aggregatedScores, popPoints, showObcineFill, currentRes, view, isoFeature, routeSet, amenityDots, hoveredAmenity, mode, selectedH3, originLngLat]);
 
-  const flyToCoord = (lng: number, lat: number, targetZoom = 14) => {
+  const flyToCoord = (lng: number, lat: number, targetZoom = 14, fromAddress = false) => {
     const map = mapRef.current;
     if (!map) return;
     map.flyTo({ center: [lng, lat], zoom: targetZoom, duration: 1200 });
     setTimeout(() => {
       setSelectedH3(h3.latLngToCell(lat, lng, H3_BASE_RES));
+      setOriginLngLat([lng, lat]);
+      setOriginFromAddress(fromAddress);
     }, 200);
   };
 
@@ -515,7 +566,10 @@ export default function SloveniaMap() {
       <ChatBox onSelectH3={setSelectedH3} flyToCoord={flyToCoord} />
       <div id="map-root" ref={containerRef} />
 
-      <AddressSearch onPick={flyToCoord} />
+      <AddressSearch
+        ref={addressSearchRef}
+        onPick={(lng, lat) => flyToCoord(lng, lat, 14, true)}
+      />
 
       <div className="zoom-indicator" aria-hidden>
         zoom <b>{zoom.toFixed(1)}</b> ·{" "}
@@ -605,9 +659,13 @@ export default function SloveniaMap() {
       <Scorecard
         h3id={selectedH3}
         mode={mode}
+        originLngLat={originLngLat}
         onClose={() => {
+          if (originFromAddress) addressSearchRef.current?.clear();
           setSelectedH3(null);
           setHoveredAmenity(null);
+          setOriginLngLat(null);
+          setOriginFromAddress(false);
         }}
         onIsochrone={setIsoFeature}
         onRoute={setRouteSet}

@@ -150,10 +150,19 @@ Do NOT wrap the JSON in markdown blocks. Output raw JSON only.`;
       }
     }
 
-    // 3. Query Supabase via our new modular RPC
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    // 3. Query Supabase via our new modular RPC.
+    // The /sb/* path in NEXT_PUBLIC_SUPABASE_URL is a browser-only Next.js
+    // rewrite (next.config.mjs). Server code must use the absolute URL.
+    const supabaseUrl = process.env.SUPABASE_INTERNAL_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL;
     const supabaseAnon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-    
+
+    if (!supabaseUrl || supabaseUrl.startsWith("/")) {
+      return NextResponse.json(
+        { error: "SUPABASE_INTERNAL_URL is unset or non-absolute" },
+        { status: 500 },
+      );
+    }
+
     const filterPayload = {
       required_category_indices: resultSpec.required_category_indices,
       h3_in: h3In

@@ -170,6 +170,23 @@ async function main() {
   if (r2.status !== 422) throw new Error(`Expected 422, got ${r2.status}`);
   console.log("✓ /api/llm 422 on bad payload");
 
+  // /api/llm kind:"search" — used to 500 with "Failed to parse URL from
+  // /sb/rest/v1/rpc/llm_search_cells" because the server was reading the
+  // browser-only NEXT_PUBLIC_SUPABASE_URL=/sb proxy path. The fix routes
+  // server fetches through absolute SUPABASE_INTERNAL_URL. We don't assert
+  // 200 (OpenRouter is external + can flake), only that the *specific*
+  // URL-parse regression doesn't reappear.
+  const r3 = await fetch(`${URL}/api/llm`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ kind: "search", query: "Sva mlada družina v Ljubljani", history: [] }),
+  });
+  const r3text = await r3.text();
+  if (r3text.includes("Failed to parse URL") || r3text.includes("/sb/rest/v1/rpc/llm_search_cells")) {
+    throw new Error(`/api/llm URL-parse fix regressed: ${r3text.slice(0, 200)}`);
+  }
+  console.log(`✓ /api/llm search: status ${r3.status}, no URL-parse regression`);
+
   // Summary of requests.
   console.log("\n=== Unique backend-touching requests ===");
   const seen = new Set();
