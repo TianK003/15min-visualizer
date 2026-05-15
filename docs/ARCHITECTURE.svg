@@ -1,0 +1,186 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1400 920" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#475569"/>
+    </marker>
+    <marker id="arrowAmber" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#B45309"/>
+    </marker>
+  </defs>
+
+  <!-- Title -->
+  <text x="700" y="35" text-anchor="middle" font-size="22" font-weight="700" fill="#0F172A">15-Minute Slovenia — System Architecture</text>
+  <text x="700" y="56" text-anchor="middle" font-size="13" fill="#64748B">Hackathon GEO Slovenija · 15.–16. maj 2026</text>
+
+  <!-- ============ PHASE 1: ETL ============ -->
+  <rect x="20" y="75" width="1360" height="395" fill="#EFF6FF" stroke="#BFDBFE" stroke-width="1.5" rx="12"/>
+  <text x="40" y="103" font-size="17" font-weight="700" fill="#1E3A8A">Phase 1 — ETL / Precompute</text>
+  <text x="40" y="123" font-size="12" fill="#1D4ED8">Friday afternoon · runs once · ~3–5 h · output flows into Phase 2</text>
+
+  <!-- Column headers -->
+  <text x="60" y="158" font-size="11" font-weight="700" fill="#64748B" letter-spacing="1">DATA SOURCES (external, open)</text>
+  <text x="500" y="158" font-size="11" font-weight="700" fill="#64748B" letter-spacing="1">PROCESSING</text>
+  <text x="950" y="158" font-size="11" font-weight="700" fill="#64748B" letter-spacing="1">STORAGE</text>
+
+  <!-- Sources column -->
+  <g>
+    <rect x="40" y="170" width="260" height="48" fill="white" stroke="#94A3B8" stroke-width="1.5" rx="6"/>
+    <text x="56" y="192" font-size="13" font-weight="600" fill="#0F172A">Geofabrik · OSM PBF</text>
+    <text x="56" y="208" font-size="11" fill="#64748B">slovenia-latest.osm.pbf (~50 MB)</text>
+
+    <rect x="40" y="226" width="260" height="48" fill="white" stroke="#94A3B8" stroke-width="1.5" rx="6"/>
+    <text x="56" y="248" font-size="13" font-weight="600" fill="#0F172A">ARSO Naravovarstveni atlas</text>
+    <text x="56" y="264" font-size="11" fill="#64748B">Natura 2000 · zavarovana območja</text>
+
+    <rect x="40" y="282" width="260" height="48" fill="white" stroke="#94A3B8" stroke-width="1.5" rx="6"/>
+    <text x="56" y="304" font-size="13" font-weight="600" fill="#0F172A">GURS · eProstor WFS</text>
+    <text x="56" y="320" font-size="11" fill="#64748B">RPE · občine · kataster</text>
+
+    <rect x="40" y="338" width="260" height="48" fill="white" stroke="#94A3B8" stroke-width="1.5" rx="6"/>
+    <text x="56" y="360" font-size="13" font-weight="600" fill="#0F172A">SURS STAGE / Kontur</text>
+    <text x="56" y="376" font-size="11" fill="#64748B">Population grid 100 m / H3 400 m</text>
+
+    <rect x="40" y="394" width="260" height="48" fill="white" stroke="#94A3B8" stroke-width="1.5" rx="6"/>
+    <text x="56" y="416" font-size="13" font-weight="600" fill="#0F172A">OPSI / SiStat</text>
+    <text x="56" y="432" font-size="11" fill="#64748B">Občina indicators (CKAN / PX-Web)</text>
+  </g>
+
+  <!-- Processing column -->
+  <g>
+    <rect x="475" y="170" width="280" height="60" fill="#DBEAFE" stroke="#3B82F6" stroke-width="1.5" rx="6"/>
+    <text x="491" y="194" font-size="13" font-weight="700" fill="#1E3A8A">Python ETL · uv + GeoPandas</text>
+    <text x="491" y="210" font-size="11" fill="#1E40AF">extract · classify amenities · 8 categories</text>
+    <text x="491" y="223" font-size="11" fill="#1E40AF">generate H3 res 10 cells · async orchestration</text>
+
+    <rect x="475" y="246" width="280" height="60" fill="#DBEAFE" stroke="#3B82F6" stroke-width="1.5" rx="6"/>
+    <text x="491" y="270" font-size="13" font-weight="700" fill="#1E3A8A">Valhalla · Docker</text>
+    <text x="491" y="286" font-size="11" fill="#1E40AF">graph build (SI OSM, walking + biking)</text>
+    <text x="491" y="299" font-size="11" fill="#1E40AF">isochrone batch · ~37k amenities</text>
+
+    <rect x="475" y="322" width="280" height="60" fill="#DBEAFE" stroke="#3B82F6" stroke-width="1.5" rx="6"/>
+    <text x="491" y="346" font-size="13" font-weight="700" fill="#1E3A8A">Spatial join (PostGIS)</text>
+    <text x="491" y="362" font-size="11" fill="#1E40AF">cells × isochrone unions per category</text>
+    <text x="491" y="375" font-size="11" fill="#1E40AF">score = binary count, 0–8</text>
+
+    <rect x="475" y="398" width="280" height="50" fill="#DBEAFE" stroke="#3B82F6" stroke-width="1.5" rx="6"/>
+    <text x="491" y="422" font-size="13" font-weight="700" fill="#1E3A8A">tippecanoe</text>
+    <text x="491" y="438" font-size="11" fill="#1E40AF">vector tile bake → PMTiles file</text>
+  </g>
+
+  <!-- Storage column -->
+  <g>
+    <rect x="930" y="180" width="260" height="80" fill="#D1FAE5" stroke="#10B981" stroke-width="1.5" rx="6"/>
+    <text x="946" y="204" font-size="13" font-weight="700" fill="#065F46">Supabase · Postgres + PostGIS</text>
+    <text x="946" y="222" font-size="11" fill="#047857">amenities (geometry + category)</text>
+    <text x="946" y="236" font-size="11" fill="#047857">cell_scores (h3, score, walk_min × 8)</text>
+    <text x="946" y="250" font-size="11" fill="#047857">občine · protected · population</text>
+
+    <rect x="930" y="280" width="260" height="56" fill="#D1FAE5" stroke="#10B981" stroke-width="1.5" rx="6"/>
+    <text x="946" y="304" font-size="13" font-weight="700" fill="#065F46">PMTiles file</text>
+    <text x="946" y="320" font-size="11" fill="#047857">~50–100 MB · static, CDN-served</text>
+
+    <rect x="930" y="356" width="260" height="56" fill="#D1FAE5" stroke="#10B981" stroke-width="1.5" rx="6"/>
+    <text x="946" y="380" font-size="13" font-weight="700" fill="#065F46">Cloudflare R2 (or Supabase Storage)</text>
+    <text x="946" y="396" font-size="11" fill="#047857">hosts PMTiles · public read</text>
+  </g>
+
+  <!-- ETL arrows -->
+  <g stroke="#475569" stroke-width="1.5" fill="none">
+    <path d="M 300 194 L 460 194" marker-end="url(#arrow)"/>
+    <path d="M 300 250 L 460 270" marker-end="url(#arrow)"/>
+    <path d="M 300 306 L 460 350" marker-end="url(#arrow)"/>
+    <path d="M 300 362 L 460 360" marker-end="url(#arrow)"/>
+    <path d="M 300 418 L 460 380" marker-end="url(#arrow)"/>
+
+    <path d="M 760 200 C 820 200, 860 220, 920 220" marker-end="url(#arrow)"/>
+    <path d="M 760 276 L 920 240" marker-end="url(#arrow)"/>
+    <path d="M 760 352 L 920 250" marker-end="url(#arrow)"/>
+    <path d="M 760 423 C 820 425, 870 310, 920 310" marker-end="url(#arrow)"/>
+    <path d="M 1060 336 L 1060 350" marker-end="url(#arrow)"/>
+  </g>
+
+  <!-- ============ PHASE 2: LIVE ============ -->
+  <rect x="20" y="490" width="1360" height="405" fill="#FFFBEB" stroke="#FDE68A" stroke-width="1.5" rx="12"/>
+  <text x="40" y="518" font-size="17" font-weight="700" fill="#78350F">Phase 2 — Live Runtime (Demo)</text>
+  <text x="40" y="538" font-size="12" fill="#B45309">Every time a user opens the site · sub-200 ms first paint · all subsequent calls cached or pre-baked</text>
+
+  <!-- User -->
+  <g>
+    <rect x="40" y="565" width="180" height="60" fill="white" stroke="#92400E" stroke-width="1.5" rx="6"/>
+    <text x="56" y="590" font-size="13" font-weight="700" fill="#78350F">User browser</text>
+    <text x="56" y="606" font-size="11" fill="#B45309">desktop or mobile</text>
+    <text x="56" y="619" font-size="11" fill="#B45309">MapLibre + deck.gl</text>
+  </g>
+
+  <!-- Frontend -->
+  <g>
+    <rect x="280" y="555" width="240" height="80" fill="#FCE7F3" stroke="#DB2777" stroke-width="1.5" rx="6"/>
+    <text x="296" y="580" font-size="13" font-weight="700" fill="#9D174D">Vercel · Next.js 14</text>
+    <text x="296" y="597" font-size="11" fill="#BE185D">Edge / SSR · App Router</text>
+    <text x="296" y="611" font-size="11" fill="#BE185D">3 modes: Doma · Investitor · Občina</text>
+    <text x="296" y="625" font-size="11" fill="#BE185D">Walk / Bike toggle · SI only</text>
+  </g>
+
+  <!-- Services right side -->
+  <g>
+    <rect x="610" y="540" width="220" height="50" fill="white" stroke="#92400E" stroke-width="1.5" rx="6"/>
+    <text x="626" y="562" font-size="13" font-weight="700" fill="#78350F">Maptiler · basemap</text>
+    <text x="626" y="578" font-size="11" fill="#B45309">Dataviz Light style</text>
+
+    <rect x="610" y="602" width="220" height="50" fill="white" stroke="#92400E" stroke-width="1.5" rx="6"/>
+    <text x="626" y="624" font-size="13" font-weight="700" fill="#78350F">cell_scores.json.gz</text>
+    <text x="626" y="640" font-size="11" fill="#B45309">~3 MB · client aggregates by zoom</text>
+
+    <rect x="610" y="664" width="220" height="50" fill="white" stroke="#92400E" stroke-width="1.5" rx="6"/>
+    <text x="626" y="686" font-size="13" font-weight="700" fill="#78350F">Supabase REST</text>
+    <text x="626" y="702" font-size="11" fill="#B45309">cell_amenities pins · občina data</text>
+
+    <rect x="610" y="726" width="220" height="50" fill="white" stroke="#92400E" stroke-width="1.5" rx="6"/>
+    <text x="626" y="748" font-size="13" font-weight="700" fill="#78350F">Photon (Komoot)</text>
+    <text x="626" y="764" font-size="11" fill="#B45309">address autocomplete · public</text>
+
+    <rect x="610" y="788" width="220" height="60" fill="#FED7AA" stroke="#EA580C" stroke-width="1.5" rx="6"/>
+    <text x="626" y="811" font-size="13" font-weight="700" fill="#9A3412">Railway · Valhalla</text>
+    <text x="626" y="827" font-size="11" fill="#C2410C">live isochrone on click ★</text>
+    <text x="626" y="841" font-size="11" fill="#C2410C">walking + biking</text>
+  </g>
+
+  <!-- Right column annotations -->
+  <g>
+    <rect x="900" y="540" width="460" height="280" fill="#FFFFFF" stroke="#E5E7EB" stroke-width="1" rx="8"/>
+    <text x="920" y="565" font-size="13" font-weight="700" fill="#0F172A">User journey (Mode A — Doma)</text>
+
+    <text x="920" y="590" font-size="11" fill="#475569">1. Land on map. Slovenia colored green→red, hatched protected zones.</text>
+    <text x="920" y="608" font-size="11" fill="#475569">2. Type address → Photon autocompletes → map flies to coordinates.</text>
+    <text x="920" y="626" font-size="11" fill="#475569">3. Side panel slides in: score 6/8, 8 category icons, nearest amenity.</text>
+    <text x="920" y="644" font-size="11" fill="#475569">4. Click "Show 15-min reach" → live Valhalla → polygon overlay (★).</text>
+    <text x="920" y="662" font-size="11" fill="#475569">5. Toggle Walk/Bike → polygon rescales, hex colors update.</text>
+    <text x="920" y="680" font-size="11" fill="#475569">6. Click amenity pin → highlights scorecard row + draws line to cell.</text>
+
+    <text x="920" y="713" font-size="13" font-weight="700" fill="#0F172A">Cost stack</text>
+    <text x="920" y="735" font-size="11" fill="#475569">Vercel free · Supabase free (500 MB) · Maptiler free (100k loads/mo)</text>
+    <text x="920" y="752" font-size="11" fill="#475569">Photon public endpoint · R2 free tier · Railway Hobby ~$5–10/mo</text>
+    <text x="920" y="769" font-size="11" fill="#475569">Total: ~€10/mo for the live demo. Domain optional.</text>
+
+    <text x="920" y="800" font-size="13" font-weight="700" fill="#0F172A">★ = single point of failure on demo day</text>
+    <text x="920" y="816" font-size="11" fill="#475569">Feature flag: skip live isochrone, use pre-baked fallback.</text>
+  </g>
+
+  <!-- Live arrows -->
+  <g stroke="#B45309" stroke-width="1.5" fill="none">
+    <path d="M 220 595 L 270 595" marker-end="url(#arrowAmber)"/>
+    <path d="M 520 580 L 600 565" marker-end="url(#arrowAmber)"/>
+    <path d="M 520 595 L 600 627" marker-end="url(#arrowAmber)"/>
+    <path d="M 520 610 L 600 689" marker-end="url(#arrowAmber)"/>
+    <path d="M 520 620 L 600 751" marker-end="url(#arrowAmber)"/>
+    <path d="M 520 630 L 600 810" marker-end="url(#arrowAmber)"/>
+  </g>
+
+  <!-- Cross-phase arrow: PMTiles flows into live -->
+  <g stroke="#10B981" stroke-width="2" stroke-dasharray="6 4" fill="none">
+    <path d="M 1060 412 C 1060 460, 720 480, 720 600" marker-end="url(#arrow)"/>
+  </g>
+  <text x="1075" y="450" font-size="11" font-style="italic" fill="#047857">precomputed data flows down ↓</text>
+
+  <text x="700" y="908" text-anchor="middle" font-size="11" fill="#94A3B8">Plan v1.0 · all 16 tech-lead decisions locked</text>
+</svg>
