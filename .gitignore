@@ -33,11 +33,7 @@ Thumbs.db
 coverage/
 
 # Raw data & ETL intermediates — too large for git; regenerate via DATA_SOURCES.md + backend/etl
-data/15min-slo/*.pbf
-data/15min-slo/*.gpkg
-data/15min-slo/*.jsonl
-data/15min-slo/cell_scores.json
-data/15min-slo/tiles/
+data/15min-slo/*
 
 # TypeScript build cache
 **/*.tsbuildinfo

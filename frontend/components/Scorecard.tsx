@@ -4,35 +4,41 @@ import { useEffect, useState } from "react";
 import * as h3 from "h3-js";
 import { cellScore, amenitiesForPoint, type CellScoreRow, type AmenityForPoint } from "@/lib/supabase";
 import { isochrone } from "@/lib/valhalla";
+import { fetchSuggestions, ZONE_LABELS, CAT_LABELS, CAT_ICONS, type Suggestion } from "@/lib/suggestions";
 
 const CATS = ["trgovina", "izobrazevanje", "zdravstvo", "park", "promet", "sport", "storitve", "delo"] as const;
-const CAT_LABELS = ["Trgovina", "Izobraževanje", "Zdravstvo", "Park", "Javni promet", "Šport", "Storitve", "Delo"];
-const CAT_ICONS = ["🛒", "🎓", "⚕️", "🌳", "🚌", "🏟️", "✂️", "💼"];
 
 type Props = {
   h3id: string | null;
   onClose: () => void;
   onIsochrone: (poly: GeoJSON.Feature | null) => void;
+  onSuggestions: (pins: Suggestion[]) => void;
+  onFlyTo: (lat: number, lng: number) => void;
 };
 
-export default function Scorecard({ h3id, onClose, onIsochrone }: Props) {
+export default function Scorecard({ h3id, onClose, onIsochrone, onSuggestions, onFlyTo }: Props) {
   const [cell, setCell] = useState<CellScoreRow | null>(null);
   const [amenities, setAmenities] = useState<AmenityForPoint[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [mode, setMode] = useState<"walk" | "bike">("walk");
   const [isoLoading, setIsoLoading] = useState(false);
+  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
 
   useEffect(() => {
     if (!h3id) {
       setCell(null);
       setAmenities(null);
       setError(null);
+      setSuggestions([]);
+      onSuggestions([]);
       return;
     }
     let cancelled = false;
     setLoading(true);
     setError(null);
+    setSuggestions([]);
+    onSuggestions([]);
     (async () => {
       try {
         const [lat, lng] = h3.cellToLatLng(h3id);
@@ -56,7 +62,35 @@ export default function Scorecard({ h3id, onClose, onIsochrone }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [h3id]);
+  }, [h3id, onSuggestions]);
+
+  // Fetch OPN suggestions for missing categories after cell loads.
+  useEffect(() => {
+    if (!h3id || !cell || cell.score >= 8) return;
+
+    const missingIdxs = cell.walk_min
+      .map((v, i) => (v === null ? i : -1))
+      .filter((i) => i >= 0);
+    if (missingIdxs.length === 0) return;
+
+    const ac = new AbortController();
+    const [lat, lng] = h3.cellToLatLng(h3id);
+
+    fetchSuggestions(lat, lng, missingIdxs, ac.signal)
+      .then((s) => {
+        if (!ac.signal.aborted) {
+          setSuggestions(s);
+          onSuggestions(s);
+        }
+      })
+      .catch((err: unknown) => {
+        if ((err as Error)?.name !== "AbortError") {
+          console.warn("suggestions fetch failed:", err);
+        }
+      });
+
+    return () => ac.abort();
+  }, [h3id, cell, onSuggestions]);
 
   // Clear isochrone when the panel closes / cell changes.
   useEffect(() => {
@@ -68,9 +102,6 @@ export default function Scorecard({ h3id, onClose, onIsochrone }: Props) {
     setIsoLoading(true);
     try {
       const [lat, lng] = h3.cellToLatLng(h3id);
-      // 15 min walk == 6 min bike == 15 min bike at 2.5x → for the polygon we
-      // always ask Valhalla for the pedestrian 15-min reach. The bike toggle
-      // reuses the same polygon scaled mentally (TASKS C5 lock).
       const poly = await isochrone({ lat, lng, walkMin: 15, costing: "pedestrian" });
       onIsochrone(poly);
     } catch (err) {
@@ -81,6 +112,8 @@ export default function Scorecard({ h3id, onClose, onIsochrone }: Props) {
   };
 
   if (!h3id) return null;
+
+  const suggMap = new Map(suggestions.map((s) => [s.categoryIndex, s]));
 
   return (
     <aside className="scorecard" role="dialog" aria-label="Skor celice">
@@ -111,6 +144,7 @@ export default function Scorecard({ h3id, onClose, onIsochrone }: Props) {
               const bikeVal = cell.bike_min[i];
               const reachable = walkVal !== null;
               const val = mode === "walk" ? walkVal : bikeVal;
+              const sugg = suggMap.get(i);
               return (
                 <div key={i} className={`scorecard-row ${reachable ? "ok" : "miss"}`}>
                   <span className="ico" aria-hidden>{CAT_ICONS[i]}</span>
@@ -119,6 +153,15 @@ export default function Scorecard({ h3id, onClose, onIsochrone }: Props) {
                     {reachable ? "✓" : "—"}
                   </span>
                   <span className="time">{val !== null ? `${val} min` : ""}</span>
+                  {!reachable && sugg && (
+                    <button
+                      className={`suggestion-btn${sugg.source === "fro" ? " suggestion-btn--fro" : ""}`}
+                      onClick={() => onFlyTo(sugg.lat, sugg.lng)}
+                      title={sugg.source === "fro" ? "Degradirano območje" : `OPN cona: ${sugg.zoneDesc}`}
+                    >
+                      {sugg.source === "fro" ? "🔴 Degradirano območje" : `📍 ${ZONE_LABELS[sugg.zoneCode] ?? sugg.zoneCode}`} · {formatDist(sugg.distanceM)}
+                    </button>
+                  )}
                 </div>
               );
             })}
@@ -180,4 +223,8 @@ function bucketFor(score: number): string {
   if (score >= 4) return "yellow";
   if (score >= 2) return "orange";
   return "red";
+}
+
+function formatDist(m: number): string {
+  return m < 1000 ? `${Math.round(m)} m` : `${(m / 1000).toFixed(1)} km`;
 }

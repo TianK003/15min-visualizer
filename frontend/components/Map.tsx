@@ -4,14 +4,24 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { MapboxOverlay } from "@deck.gl/mapbox";
-import type { Layer } from "@deck.gl/core";
-import { GeoJsonLayer } from "@deck.gl/layers";
+import type { Layer, PickingInfo } from "@deck.gl/core";
+import { GeoJsonLayer, ScatterplotLayer } from "@deck.gl/layers";
 import { HeatmapLayer } from "@deck.gl/aggregation-layers";
 import { H3HexagonLayer } from "@deck.gl/geo-layers";
 import * as h3 from "h3-js";
 import Scorecard from "@/components/Scorecard";
 import AddressSearch from "@/components/AddressSearch";
 import IzvorPodatkov from "@/components/IzvorPodatkov";
+import type { Suggestion } from "@/lib/suggestions";
+import { CAT_LABELS, CAT_ICONS, ZONE_REASONS } from "@/lib/suggestions";
+
+type GroupedPin = {
+  lat: number;
+  lng: number;
+  zoneCode: string;
+  zoneDesc: string;
+  items: Suggestion[];
+};
 
 const BASEMAP_STYLE = "https://tiles.openfreemap.org/styles/positron";
 
@@ -162,6 +172,7 @@ export default function SloveniaMap() {
   const [usingDummy, setUsingDummy] = useState<boolean>(false);
   const [selectedH3, setSelectedH3] = useState<string | null>(null);
   const [isoFeature, setIsoFeature] = useState<GeoJSON.Feature | null>(null);
+  const [suggestionPins, setSuggestionPins] = useState<Suggestion[]>([]);
   const [provenanceOpen, setProvenanceOpen] = useState(false);
 
   // Fetch real scores; fall back to dummy if not yet baked.
@@ -280,6 +291,20 @@ export default function SloveniaMap() {
     [cells, currentRes, showObcineFill],
   );
 
+  const groupedPins = useMemo<GroupedPin[]>(() => {
+    const map = new Map<string, GroupedPin>();
+    for (const s of suggestionPins) {
+      const key = `${s.lat.toFixed(5)},${s.lng.toFixed(5)}`;
+      const existing = map.get(key);
+      if (existing) {
+        existing.items.push(s);
+      } else {
+        map.set(key, { lat: s.lat, lng: s.lng, zoneCode: s.zoneCode, zoneDesc: s.zoneDesc, items: [s] });
+      }
+    }
+    return Array.from(map.values());
+  }, [suggestionPins]);
+
   const popPoints = useMemo<PopPoint[]>(() => {
     if (pops.length === 0) return [];
     const out: PopPoint[] = new Array(pops.length);
@@ -378,8 +403,68 @@ export default function SloveniaMap() {
       );
     }
 
-    overlay.setProps({ layers });
-  }, [aggregatedScores, popPoints, showObcineFill, currentRes, view, isoFeature]);
+    if (groupedPins.length > 0) {
+      layers.push(
+        new ScatterplotLayer<GroupedPin>({
+          id: "suggestions",
+          data: groupedPins,
+          getPosition: (d) => [d.lng, d.lat],
+          getRadius: (d) => 10 + (d.items.length - 1) * 3,
+          radiusUnits: "pixels",
+          getFillColor: (d) => d.items[0]?.source === "fro" ? [239, 68, 68, 230] : [250, 204, 21, 230],
+          getLineColor: [255, 255, 255, 255],
+          lineWidthMinPixels: 2,
+          stroked: true,
+          pickable: true,
+        }),
+      );
+    }
+
+    overlay.setProps({ layers, getTooltip: suggestionTooltip });
+  }, [aggregatedScores, popPoints, groupedPins, showObcineFill, currentRes, view, isoFeature, suggestionPins]);
+
+  const suggestionTooltip = ({ object, layer }: PickingInfo) => {
+    if (layer?.id !== "suggestions" || !object) return null;
+    const pin = object as GroupedPin;
+
+    const rows = pin.items.map((s) => {
+      const dist = s.distanceM < 1000
+        ? `${Math.round(s.distanceM)} m`
+        : `${(s.distanceM / 1000).toFixed(1)} km`;
+      const reason =
+        ZONE_REASONS[s.zoneCode]?.[s.categoryIndex] ??
+        `Primerno za ${CAT_LABELS[s.categoryIndex].toLowerCase()}`;
+      return `
+        <div style="display:flex;gap:8px;align-items:flex-start;padding:5px 0;${pin.items.indexOf(s) > 0 ? "border-top:1px solid #f0f0f0;" : ""}">
+          <span style="font-size:16px;flex-shrink:0">${CAT_ICONS[s.categoryIndex]}</span>
+          <div>
+            <div style="font-weight:600;font-size:13px">${CAT_LABELS[s.categoryIndex]}</div>
+            <div style="color:#555;font-size:12px;margin-top:1px">${reason}</div>
+            <div style="color:#999;font-size:11px;margin-top:2px">${dist} stran</div>
+          </div>
+        </div>`;
+    }).join("");
+
+    return {
+      html: `
+        <div style="max-width:240px">
+          <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:#999;margin-bottom:4px">
+            ${pin.items[0]?.source === "fro"
+              ? "🔴 Degradirano območje · Predlagana revitalizacija"
+              : `OPN cona ${pin.zoneCode} · Predlagana gradnja`}
+          </div>
+          ${rows}
+        </div>`,
+      style: {
+        background: "white",
+        padding: "10px 12px",
+        borderRadius: "10px",
+        boxShadow: "0 4px 16px rgba(0,0,0,0.15)",
+        border: "1px solid rgba(0,0,0,0.06)",
+        fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+      },
+    };
+  };
 
   const flyToCoord = (lng: number, lat: number, targetZoom = 14) => {
     const map = mapRef.current;
@@ -464,6 +549,8 @@ export default function SloveniaMap() {
         h3id={selectedH3}
         onClose={() => setSelectedH3(null)}
         onIsochrone={setIsoFeature}
+        onSuggestions={setSuggestionPins}
+        onFlyTo={(lat, lng) => mapRef.current?.flyTo({ center: [lng, lat], zoom: 15, duration: 800 })}
       />
 
       <button

@@ -315,6 +315,24 @@ body {
   color: #555;
   text-align: right;
 }
+.suggestion-btn {
+  grid-column: 1 / -1;
+  appearance: none;
+  border: 1px solid rgba(250, 204, 21, 0.5);
+  background: rgba(254, 249, 195, 0.7);
+  border-radius: 6px;
+  font: inherit;
+  font-size: 11px;
+  color: #713f12;
+  padding: 3px 8px;
+  cursor: pointer;
+  text-align: left;
+  line-height: 1.4;
+  transition: background 100ms ease;
+}
+.suggestion-btn:hover { background: rgba(254, 240, 138, 0.9); }
+.suggestion-btn--fro { border-color: rgba(239, 68, 68, 0.4); background: rgba(254, 226, 226, 0.7); color: #7f1d1d; }
+.suggestion-btn--fro:hover { background: rgba(254, 202, 202, 0.9); }
 
 .mode-toggle {
   display: inline-flex;
