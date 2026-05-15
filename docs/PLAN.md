@@ -45,11 +45,11 @@ H3 resolution choice for Slovenia (20,273 km²):
 
 ### Frontend (Vercel)
 - **Next.js 14 App Router** on Vercel free tier
-- **MapLibre GL JS** + **OpenFreeMap `positron` style** for the basemap (free, no API key, no registration)
-- **deck.gl** with `H3HexagonLayer` for the heatmap overlay
-- **shadcn/ui + Tailwind** for the side panel, tabs, scorecard
-- **Zustand** for client state
-- **Photon (Komoot public endpoint)** for address autocomplete — free, no key, decent SI coverage
+- **MapLibre GL JS** + **OpenFreeMap** vector tiles — `positron` in light theme, `dark-matter` in dark theme (free, no API key, no registration)
+- **deck.gl** with `H3HexagonLayer` for the score overlay and `HeatmapLayer` for the population view
+- **Hand-rolled CSS token system** in `frontend/app/globals.css` (no Tailwind/shadcn) — `:root` declares `--surface-glass`, `--text-primary`, `--accent`, etc.; `[data-theme="dark"]` overrides them. Glass-morphism baseline: `backdrop-filter: blur(20px) saturate(140%)`. Decision rationale: with one page and ~5 stateful components the Tailwind toolchain is overkill, while token-based CSS keeps light/dark parity trivial.
+- **React `useState` for local state**; no Zustand. Permalink hash (lng/lat/zoom/h3) is the cross-load store.
+- **Address autocomplete:** Photon (Komoot) primary, **Nominatim** fallback when Photon fails — both bounded to the Slovenia bbox, no key required. Minimum-character threshold 5.
 - **Slovenian-only UI.** No `next-intl` switching layer; copy is hand-written in SL. English translation is **out of scope** (decision 2026-05-13).
 
 ### Backend (Supabase + Railway)
@@ -91,11 +91,9 @@ Actual bake time observed: **02_isochrones.py ≈ 1.3 min** (464 req/s sustained
 
 **Only bake at H3 resolution 10.** Coarser zoom levels are aggregated client-side — see §3a.
 
-### Biking (locked: speed multiplier)
-- Store `walk_min` per cell-category pair. **Bike time = walk_min / 2.5.**
-- Frontend toggle "Walk / Bike" rescales the threshold: 15 min walking ≡ 6 min biking, or equivalently a "15 min biking" view uses a 37.5-min walking threshold.
-- Two precomputed columns is enough. No second Valhalla pass for the hackathon.
-- Post-hackathon (before SLO4D): rerun bake with Valhalla `bicycle` profile for accuracy.
+### Biking (locked: speed multiplier → real `bicycle` costing)
+- The original plan assumed `bike_time = walk_time / 2.5` until SLO4D. As of 2026-05-15 the bake already includes a real Valhalla `bicycle` pass — `cell_scores` carries both `walk_min[]` and `bike_min[]`. The walk/2.5 estimate is no longer used at runtime.
+- Frontend Hoja/Kolo toggle reads the mode-appropriate column directly and re-bakes the iso polygon + active route with `costing=bicycle` (`bicycle_type=Hybrid`, locked cycling speed `NEXT_PUBLIC_CYCLING_SPEED=13` km/h).
 
 ---
 

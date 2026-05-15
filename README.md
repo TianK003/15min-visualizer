@@ -4,6 +4,18 @@ An interactive map showing how much of Slovenia is a true 15-minute neighborhood
 
 Built for **GEO Slovenija** (15.–16. maj 2026) with a polish window through **SLO4D** (9. junij 2026).
 
+## What ships in the UI
+
+- **Address search bar** (top center) — Photon primary, Nominatim fallback, 5-char minimum, SI-bounded
+- **Click-anywhere Scorecard** — 0–8 score, per-category time chips, walk/bike toggle, live 15-min isochrone reveal, click a category row to draw paths to each reachable amenity in that category's color
+- **Hoja / Kolo** mode toggle — flips the whole view (badge, chips, iso polygon, amenity pin set, active route) to real Valhalla `bicycle` costing
+- **AI assistant** (bottom-right "✨ Najdi mi dom") — describe a life scenario in Slovenian; the LLM picks categories + a target town and flies the map to the best cell
+- **Population view** — `HeatmapLayer` with a magma palette as a second lens on the same map
+- **Light + dark theme** — toggle in the bottom-left cluster or inside "Izvor podatkov"; persists to localStorage and swaps the basemap (positron ↔ dark-matter)
+- **Provenance panel "Izvor podatkov"** — one card per dataset with licence, count, and rationale; links to the REST API docs
+- **REST API docs** (`/api-docs`) — tabbed Swagger UI: hand-authored OpenAPI 3.1 for the Next.js routes (`/api/llm`, `/api/valhalla/{endpoint}`) + auto-generated PostgREST spec for the Supabase tables
+- **Permalink** — every pan/zoom/click writes `#lng/lat/z/h3` to the URL; sharing the link restores the exact view
+
 ## Repo layout
 
 ```
@@ -245,6 +257,9 @@ Run only the script whose inputs changed:
 | Scorecard stuck on "Nalagam …" | Open devtools → Network. Look for `/sb/rest/v1/cell_scores?h3=eq.` and `/sb/rest/v1/rpc/amenities_for_point`. 401 means anon key mismatch in `.env.local`; 404 means the upload script wasn't run |
 | Valhalla container 405 in browser console | By design; the app calls Valhalla via `/api/valhalla/*` (server-side proxy). Don't fetch port 8002 directly from the browser |
 | Photon dropdown returns 400 | `&lang=sl` isn't supported by Photon; the code already omits it. Don't re-add it |
+| Photon down entirely | The address search auto-falls back to Nominatim (`nominatim.openstreetmap.org/search`), bounded to Slovenia. If both fail, the dropdown shows "Iskanje naslova ni na voljo" |
+| `/api/llm` returns 501 | `OPENROUTER_API_KEY` not set in `.env.local`. The chatbot calls OpenRouter; either set the key or close the chat affordance for the demo |
+| Dark mode "stuck" | `localStorage.theme` persists across sessions. Open devtools → Application → Local Storage and remove the `theme` key to fall back to system preference |
 | ETL `08_flag_unbuildable.py` fails with "relation does not exist" | Migrations not applied. Run `supabase db reset --local` and try again |
 | `supabase start` hangs at "Pulling postgres..." | Docker Desktop just woke up — give it a minute. If it never finishes, `docker pull supabase/postgres:17.X.X` manually |
 | Slow file-watch / `EBUSY` errors | Repo is on `/mnt/c/...`. Move it to the WSL filesystem (`~/`) |
