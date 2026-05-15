@@ -5,13 +5,20 @@ import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { MapboxOverlay } from "@deck.gl/mapbox";
 import type { Layer } from "@deck.gl/core";
-import { GeoJsonLayer } from "@deck.gl/layers";
+import { GeoJsonLayer, PathLayer, TextLayer, ScatterplotLayer } from "@deck.gl/layers";
 import { HeatmapLayer } from "@deck.gl/aggregation-layers";
 import { H3HexagonLayer } from "@deck.gl/geo-layers";
 import * as h3 from "h3-js";
-import Scorecard from "@/components/Scorecard";
+import Scorecard, { type RouteSet } from "@/components/Scorecard";
 import AddressSearch from "@/components/AddressSearch";
 import IzvorPodatkov from "@/components/IzvorPodatkov";
+import { categoryById } from "@/lib/categories";
+import type { AmenityForPoint } from "@/lib/supabase";
+
+// All category paths use this single contrast color: slate-900 reads cleanly
+// on every score-bucket fill (green / yellow / orange / red at α 128).
+const PATH_COLOR: [number, number, number, number] = [15, 23, 42, 240]; // #0f172a
+const DOT_HALO: [number, number, number, number] = [255, 255, 255, 230];
 
 const BASEMAP_STYLE = "https://tiles.openfreemap.org/styles/positron";
 
@@ -46,8 +53,10 @@ const LJUBLJANA_BBOX = {
 const H3_BASE_RES = 10;
 
 type View = "15min" | "population";
+export type Mode = "walk" | "bike";
 
-type ScoreCell = { h3: string; score: number };
+/** Score JSON shape: {h3, w, b} — walk & bike scores baked together. */
+type ScoreCell = { h3: string; w: number; b: number };
 type PopCell = { h3: string; pop: number };
 type PopPoint = { position: [number, number]; pop: number };
 
@@ -61,19 +70,20 @@ function zoomToResolution(zoom: number): number {
 
 function aggregateMean(cells: ScoreCell[], targetRes: number): ScoreCell[] {
   if (targetRes >= H3_BASE_RES) return cells;
-  const groups = new Map<string, { sum: number; count: number }>();
+  const groups = new Map<string, { ws: number; bs: number; n: number }>();
   for (const c of cells) {
     const parent = h3.cellToParent(c.h3, targetRes);
     const g = groups.get(parent);
     if (g) {
-      g.sum += c.score;
-      g.count += 1;
+      g.ws += c.w;
+      g.bs += c.b;
+      g.n += 1;
     } else {
-      groups.set(parent, { sum: c.score, count: 1 });
+      groups.set(parent, { ws: c.w, bs: c.b, n: 1 });
     }
   }
   const out: ScoreCell[] = [];
-  groups.forEach((g, hex) => out.push({ h3: hex, score: g.sum / g.count }));
+  groups.forEach((g, hex) => out.push({ h3: hex, w: g.ws / g.n, b: g.bs / g.n }));
   return out;
 }
 
@@ -103,12 +113,18 @@ function generateDummyCells(): ScoreCell[] {
     [LJUBLJANA_BBOX.minLat, LJUBLJANA_BBOX.maxLng],
   ];
   const cells = h3.polygonToCells(polygon, H3_BASE_RES);
-  return cells.map((c) => ({ h3: c, score: Math.floor(Math.random() * 9) }));
+  return cells.map((c) => {
+    const r = Math.floor(Math.random() * 9);
+    return { h3: c, w: r, b: r };
+  });
 }
 
 type ObcinaProps = {
   OB_UIME?: string;
   POV_KM2?: number;
+  walk_mean?: number;
+  bike_mean?: number;
+  /** Legacy alias from the old single-mode bake. */
   mean_score?: number;
   population?: number;
   n_cells?: number;
@@ -162,7 +178,11 @@ export default function SloveniaMap() {
   const [usingDummy, setUsingDummy] = useState<boolean>(false);
   const [selectedH3, setSelectedH3] = useState<string | null>(null);
   const [isoFeature, setIsoFeature] = useState<GeoJSON.Feature | null>(null);
+  const [routeSet, setRouteSet] = useState<RouteSet | null>(null);
+  const [amenityDots, setAmenityDots] = useState<AmenityForPoint[] | null>(null);
+  const [hoveredAmenity, setHoveredAmenity] = useState<AmenityForPoint | null>(null);
   const [provenanceOpen, setProvenanceOpen] = useState(false);
+  const [mode, setMode] = useState<Mode>("walk");
 
   // Fetch real scores; fall back to dummy if not yet baked.
   useEffect(() => {
@@ -319,10 +339,17 @@ export default function SloveniaMap() {
           data: OBCINE_URL,
           stroked: true,
           filled: true,
-          getFillColor: (f) => colorForScore(f.properties?.mean_score ?? 0),
+          getFillColor: (f) => {
+            const p = f.properties ?? {};
+            // Pick the mode-appropriate mean; fall back to legacy `mean_score`
+            // (pre-bike-rescore obcine files) so loading old data still renders.
+            const v = (mode === "bike" ? p.bike_mean : p.walk_mean) ?? p.mean_score ?? 0;
+            return colorForScore(v);
+          },
           getLineColor: [60, 60, 60, 200],
           lineWidthMinPixels: 1,
           pickable: false,
+          updateTriggers: { getFillColor: mode },
         }),
       );
     } else {
@@ -340,15 +367,15 @@ export default function SloveniaMap() {
           id: "scores",
           data: aggregatedScores,
           pickable: true, // click-only (no onHover) — perf hit acceptable
-          stroked: currentRes < 9,
+          stroked: true,
           filled: true,
           extruded: false,
           getHexagon: (d) => d.h3,
-          getFillColor: (d) => colorForScore(d.score),
-          getLineColor: [255, 255, 255, 200],
+          getFillColor: (d) => colorForScore(mode === "bike" ? d.b : d.w),
+          getLineColor: [255, 255, 255, 70],
           lineWidthUnits: "pixels",
-          getLineWidth: 1,
-          updateTriggers: { getFillColor: aggregatedScores },
+          getLineWidth: 0.5,
+          updateTriggers: { getFillColor: [aggregatedScores, mode] },
           onClick: ({ object }) => {
             if (!object) return;
             // Convert aggregated h3 to a representative res-10 child for
@@ -378,8 +405,74 @@ export default function SloveniaMap() {
       );
     }
 
+    if (routeSet && routeSet.paths.length > 0) {
+      layers.push(
+        new PathLayer<{ path: [number, number][] }>({
+          id: "routes-to-amenities",
+          data: routeSet.paths.map((p) => ({ path: p.shape })),
+          getPath: (d) => d.path,
+          getColor: PATH_COLOR,
+          getWidth: 4,
+          widthUnits: "pixels",
+          widthMinPixels: 3,
+          jointRounded: true,
+          capRounded: true,
+          pickable: false,
+        }),
+      );
+    }
+
+    if (amenityDots && amenityDots.length > 0) {
+      layers.push(
+        new ScatterplotLayer<AmenityForPoint>({
+          id: "amenity-dots",
+          data: amenityDots,
+          getPosition: (a) => [a.lng, a.lat],
+          getFillColor: (a) => {
+            const cat = categoryById(a.category as never);
+            const rgb = cat?.color ?? [120, 120, 120];
+            return [rgb[0], rgb[1], rgb[2], 230];
+          },
+          getRadius: 6,
+          radiusUnits: "pixels",
+          radiusMinPixels: 5,
+          stroked: true,
+          getLineColor: DOT_HALO,
+          lineWidthMinPixels: 1.5,
+          pickable: true,
+          onHover: ({ object }) => setHoveredAmenity(object ?? null),
+        }),
+      );
+    }
+
+    if (hoveredAmenity) {
+      layers.push(
+        new TextLayer<AmenityForPoint>({
+          id: "amenity-hover-label",
+          data: [hoveredAmenity],
+          getText: (a) => a.name ?? a.category,
+          getPosition: (a) => [a.lng, a.lat],
+          getSize: 13,
+          getColor: [17, 24, 39, 240],
+          getPixelOffset: [0, -14],
+          background: true,
+          getBackgroundColor: [255, 255, 255, 235],
+          backgroundPadding: [5, 3],
+          fontFamily: "-apple-system, BlinkMacSystemFont, system-ui, sans-serif",
+          fontWeight: 500,
+          getAlignmentBaseline: "bottom",
+          getTextAnchor: "middle",
+          // Critical: deck.gl's default characterSet is ASCII-only, so 'š'/'č'/'ž'
+          // would silently drop. 'auto' walks the rendered data and bakes a font
+          // atlas with every glyph encountered.
+          characterSet: "auto",
+          pickable: false,
+        }),
+      );
+    }
+
     overlay.setProps({ layers });
-  }, [aggregatedScores, popPoints, showObcineFill, currentRes, view, isoFeature]);
+  }, [aggregatedScores, popPoints, showObcineFill, currentRes, view, isoFeature, routeSet, amenityDots, hoveredAmenity, mode]);
 
   const flyToCoord = (lng: number, lat: number, targetZoom = 14) => {
     const map = mapRef.current;
@@ -462,8 +555,18 @@ export default function SloveniaMap() {
 
       <Scorecard
         h3id={selectedH3}
-        onClose={() => setSelectedH3(null)}
+        mode={mode}
+        onModeChange={setMode}
+        onClose={() => {
+          setSelectedH3(null);
+          setHoveredAmenity(null);
+        }}
         onIsochrone={setIsoFeature}
+        onRoute={setRouteSet}
+        onAmenities={(set) => {
+          setAmenityDots(set);
+          if (!set) setHoveredAmenity(null);
+        }}
       />
 
       <button

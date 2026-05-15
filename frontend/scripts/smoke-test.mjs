@@ -26,7 +26,7 @@ async function main() {
   });
   page.on("requestfinished", (r) => {
     const u = r.url();
-    if (u.includes("127.0.0.1:54321") || u.includes("/api/")) {
+    if (u.includes("127.0.0.1:54321") || u.includes("/api/") || u.includes("/sb/")) {
       r.response().then((resp) => requests.push({ url: u, status: resp?.status() ?? 0, method: r.method() })).catch(() => {});
     }
   });
@@ -51,38 +51,84 @@ async function main() {
   });
   page.on("requestfinished", (r) => {
     const u = r.url();
-    if (u.includes("127.0.0.1:54321") || u.includes("/api/")) {
+    if (u.includes("127.0.0.1:54321") || u.includes("/api/") || u.includes("/sb/")) {
       r.response().then((resp) => requests.push({ url: u, status: resp?.status() ?? 0, method: r.method() })).catch(() => {});
     }
   });
   console.log(`→ ${URL}/${HASH}`);
   await page.goto(`${URL}/${HASH}`, { waitUntil: "domcontentloaded" });
   await page.waitForFunction(() => document.querySelectorAll("canvas").length > 0, { timeout: 60_000 });
-  // attached instead of visible — element exists, just maybe behind something
-  await page.waitForSelector(".big-score", { timeout: 25_000, state: "attached" });
+  // Wait for the score to render. The selector resolves visible but
+  // `waitForSelector` is flaky here (probably a multi-canvas raf race) —
+  // poll via waitForFunction which doesn't have that issue.
+  await page.waitForFunction(
+    () => !!document.querySelector(".big-score")?.textContent?.match(/\d/),
+    { timeout: 25_000 },
+  );
   const scoreText = (await page.locator(".big-score").first().textContent())?.trim();
   console.log(`✓ scorecard score: ${scoreText}`);
   await shot(page, "02-scorecard");
 
-  // Walk/Bike toggle.
+  // Cell open should fire BOTH amenities_for_point RPCs (walk + bike).
+  const amenityHits = requests.filter((r) => r.url.includes("rpc/amenities_for_point"));
+  if (amenityHits.length < 2) throw new Error(`Expected 2 amenities_for_point POSTs (walk+bike), got ${amenityHits.length}`);
+  console.log(`✓ Walk + bike amenity sets fetched: ${amenityHits.length} requests`);
+
+  // Walk/Bike mode toggle.
   await page.locator('.mode-toggle button:has-text("Kolo")').click({ force: true });
   await page.waitForTimeout(200);
   const ariaBike = await page.locator('.mode-toggle button:has-text("Kolo")').getAttribute("aria-pressed");
   if (ariaBike !== "true") throw new Error("bike toggle did not engage");
   console.log("✓ walk/bike toggle");
 
-  // Isochrone (via /api/valhalla proxy).
+  // Isochrone — should fire BOTH pedestrian + bicycle in parallel on first show.
   await page.locator(".iso-btn").click({ force: true });
-  await page.waitForTimeout(3000);
+  await page.waitForTimeout(3500);
   await shot(page, "03-isochrone");
-  const isoHits = requests.filter((r) => r.url.includes("/api/valhalla"));
-  if (isoHits.length === 0) console.log("⚠ no Valhalla request observed");
-  else console.log(`✓ Valhalla isochrone via proxy: ${isoHits.length} request(s), status ${isoHits[0].status}`);
+  const isoHits = requests.filter((r) => r.url.includes("/api/valhalla/isochrone"));
+  if (isoHits.length < 2) throw new Error(`Expected ≥2 isochrone POSTs (walk+bike), got ${isoHits.length}`);
+  console.log(`✓ Walk + bike isochrones fetched: ${isoHits.length} requests, status ${isoHits.map((r) => r.status).join(", ")}`);
+
+  // Button label should now say "Skrij dosegljivost".
+  const labelShown = (await page.locator(".iso-btn").textContent())?.trim() ?? "";
+  if (!labelShown.startsWith("Skrij")) throw new Error(`Expected 'Skrij…' button label, got "${labelShown}"`);
+  console.log(`✓ button label switched to: "${labelShown}"`);
+
+  // Mode toggle — should switch polygon WITHOUT new fetch.
+  const beforeToggle = requests.filter((r) => r.url.includes("/api/valhalla/isochrone")).length;
+  await page.locator('.mode-toggle button:has-text("Hoja")').click({ force: true });
+  await page.waitForTimeout(500);
+  const afterToggle = requests.filter((r) => r.url.includes("/api/valhalla/isochrone")).length;
+  if (afterToggle !== beforeToggle) throw new Error("Mode toggle re-fetched isochrones; should reuse cached pair");
+  console.log("✓ mode toggle reuses cached isochrones (no refetch)");
+
+  // Click Skrij — button text returns to "Prikaži…" and no new network calls.
+  const beforeHide = requests.length;
+  await page.locator(".iso-btn").click({ force: true });
+  await page.waitForTimeout(400);
+  const labelHidden = (await page.locator(".iso-btn").textContent())?.trim() ?? "";
+  if (!labelHidden.startsWith("Prikaži")) throw new Error(`Expected 'Prikaži…' on hide, got "${labelHidden}"`);
+  if (requests.length !== beforeHide) throw new Error("Hide click should not trigger any network");
+  console.log("✓ Skrij toggles isochrone off without refetch");
+  // Click again to show — still no new isochrone fetch (cached).
+  await page.locator(".iso-btn").click({ force: true });
+  await page.waitForTimeout(400);
+  const isoHitsAfter = requests.filter((r) => r.url.includes("/api/valhalla/isochrone")).length;
+  if (isoHitsAfter !== isoHits.length) throw new Error("Re-show should reuse cached isochrones");
+  console.log("✓ Prikaži re-show reuses cached isochrones");
+
+  // Click the "Trgovina" row → expect one /route POST and a visible path layer.
+  await page.locator('.scorecard-row.ok[data-cat="trgovina"]').click({ force: true });
+  await page.waitForTimeout(2500);
+  await shot(page, "04-route");
+  const routeHits = requests.filter((r) => r.url.includes("/api/valhalla/route"));
+  if (routeHits.length === 0) throw new Error("No /route request observed after category click");
+  console.log(`✓ Route fetched on category click: ${routeHits.length} request(s), status ${routeHits[0].status}`);
 
   // Provenance.
   await page.locator(".provenance-link").click({ force: true });
   await page.waitForSelector(".provenance", { timeout: 4000 });
-  await shot(page, "04-provenance");
+  await shot(page, "05-provenance");
   console.log("✓ provenance panel");
   await page.locator(".provenance .scorecard-close").click({ force: true });
   await page.waitForTimeout(200);
@@ -91,7 +137,7 @@ async function main() {
   await page.goto(`${URL}/api-docs`, { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(4000);
   const sw = await page.locator(".swagger-ui").isVisible().catch(() => false);
-  await shot(page, "05-swagger");
+  await shot(page, "06-swagger");
   console.log(sw ? "✓ Swagger UI mounted at /api-docs" : "⚠ Swagger UI not visible");
 
   // /api/llm.

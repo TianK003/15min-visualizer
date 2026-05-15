@@ -297,16 +297,35 @@ body {
   gap: 4px;
   margin-bottom: 12px;
 }
+/* Each row is a <button> — strip the default chrome and make it look like
+   a clickable line. Disabled rows (miss / no amenity) stay non-interactive. */
 .scorecard-row {
   display: grid;
   grid-template-columns: 22px 1fr 18px 56px;
   gap: 8px;
   align-items: center;
-  padding: 4px 4px;
+  width: 100%;
+  padding: 5px 6px;
+  border: 1px solid transparent;
   border-radius: 6px;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 100ms ease, border-color 100ms ease;
 }
-.scorecard-row.miss { color: #999; }
+.scorecard-row.ok:hover { background: rgba(0, 0, 0, 0.04); }
+.scorecard-row.ok.active {
+  background: rgba(14, 116, 144, 0.08);
+  border-color: rgba(14, 116, 144, 0.35);
+}
+.scorecard-row.miss,
+.scorecard-row:disabled { color: #999; cursor: default; }
+.scorecard-row.miss:hover { background: transparent; }
 .scorecard-row .ico { font-size: 16px; }
+.scorecard-row .cat { font-weight: 500; }
+.scorecard-row.active .cat { font-weight: 600; }
 .scorecard-row .check { font-weight: 700; color: #16a34a; text-align: center; }
 .scorecard-row.miss .check { color: #cbd5e1; }
 .scorecard-row .time {
