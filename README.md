@@ -9,8 +9,8 @@ Built for **GEO Slovenija** (15.–16. maj 2026) with a polish window through **
 - **Address search bar** (top center) — Photon primary, Nominatim fallback, 5-char minimum, SI-bounded
 - **Click-anywhere Scorecard** — 0–8 score, per-category time chips, walk/bike toggle, live 15-min isochrone reveal, click a category row to draw paths to each reachable amenity in that category's color
 - **Hoja / Kolo** mode toggle — flips the whole view (badge, chips, iso polygon, amenity pin set, active route) to real Valhalla `bicycle` costing
-- **AI assistant** (bottom-right "✨ Najdi mi dom") — describe a life scenario in Slovenian; the LLM picks categories + a target town and flies the map to the best cell
-- **Population view** — `HeatmapLayer` with a magma palette as a second lens on the same map
+- **AI assistant** (bottom-right circular chat FAB) — describe a life scenario in Slovenian; the LLM picks categories + a target town and flies the map to the best cell
+- **Investitor view** — second top-row pill switches the score map for a demand map (`population × (1 − served)`). Vertical category-filter pill column on the left, viridis-style 4-step palette with full hue + luminance separation for color-blind safety, dark-purple "zanemarljivo" for fully-served cells, pale parchment for Slovenia's unpopulated terrain (forests / ridges / lakes synthesized client-side from the obcina polygons)
 - **Light + dark theme** — toggle in the bottom-left cluster or inside "Izvor podatkov"; persists to localStorage and swaps the basemap (positron ↔ dark-matter)
 - **Provenance panel "Izvor podatkov"** — one card per dataset with licence, count, and rationale; links to the REST API docs
 - **REST API docs** (`/api-docs`) — tabbed Swagger UI: hand-authored OpenAPI 3.1 for the Next.js routes (`/api/llm`, `/api/valhalla/{endpoint}`) + auto-generated PostgREST spec for the Supabase tables

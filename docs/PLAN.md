@@ -46,7 +46,7 @@ H3 resolution choice for Slovenia (20,273 km²):
 ### Frontend (Vercel)
 - **Next.js 14 App Router** on Vercel free tier
 - **MapLibre GL JS** + **OpenFreeMap** vector tiles — `positron` in light theme, `dark-matter` in dark theme (free, no API key, no registration)
-- **deck.gl** with `H3HexagonLayer` for the score overlay and `HeatmapLayer` for the population view
+- **deck.gl** with `H3HexagonLayer` for the score / demand / unpopulated overlays (Potrošnik and Investitor views share the same hex pipeline)
 - **Hand-rolled CSS token system** in `frontend/app/globals.css` (no Tailwind/shadcn) — `:root` declares `--surface-glass`, `--text-primary`, `--accent`, etc.; `[data-theme="dark"]` overrides them. Glass-morphism baseline: `backdrop-filter: blur(20px) saturate(140%)`. Decision rationale: with one page and ~5 stateful components the Tailwind toolchain is overkill, while token-based CSS keeps light/dark parity trivial.
 - **React `useState` for local state**; no Zustand. Permalink hash (lng/lat/zoom/h3) is the cross-load store.
 - **Address autocomplete:** Photon (Komoot) primary, **Nominatim** fallback when Photon fails — both bounded to the Slovenia bbox, no key required. Minimum-character threshold 5.
@@ -227,20 +227,19 @@ On submit:
 2. Side panel slides in showing **scorecard**: large score (e.g. "6/8"), 8 category icons (✓ or ✗), nearest amenity per category with travel time.
 3. **Map auto-paints amenity pins for the clicked/searched cell** — every amenity within 15 min walk gets a category-colored pin with its walking time on a badge. Pulled from `cell_amenities` table (~10–50 pins per cell, single Supabase query). Hovering a pin highlights the matching scorecard row and vice-versa; category filter chips fade pins in/out.
 4. **"Show 15-min reach" button** → live Valhalla call returns the real walking isochrone polygon, drawn as a soft cyan overlay.
-5. Walk/Bike toggle rescales the polygon, the pin filter (walk_min ≤ 37.5), and the heatmap.
+5. Walk/Bike toggle rescales the polygon, the pin filter, and re-bakes the active route with real Valhalla `bicycle` costing.
 
 This is the screen the jury will touch. Ljubljana center scores 8/8, a remote alpine village scores 1/8 — the contrast tells the story before you say a word.
 
-### Mode B — "Investitor / Razvijalec"
-- Dropdown: "Kje odpreti [lekarno / vrtec / trgovino]?"
-- Inverted heatmap (locked formula): **demand = (population in cell) × (1 − category_satisfied)**
-- Click a hot cell → projection card: "Build here → ~3,400 residents gain access. Catchment radius: 850 m."
-- Filter by občina.
+### Mode B — "Investitor" (shipped)
+- Top-row pill switch ("Potrošnik / Investitor") flips the map to a demand layer.
+- Demand formula locked: `demand = population × (1 − category_satisfied)`. When no category is selected the formula uses the cell's overall walk score; when a category filter is active it uses that category's per-res-9 presence value from `cell_cat_scores.json`.
+- **Vertical category-filter pill column** at top-left (replaces the scoreboard when no cell is selected). 8 categories + "Vse kategorije". Active pill is the dark-on-light treatment shared with the view-switch.
+- **Palette**: viridis-style 4-step (dark-purple → teal-blue → green → bright-yellow) chosen for color-blind safety. Cells with zero remaining potential (fully-served zones or no population) bucket to dark-purple "zanemarljivo". Unpopulated geography (forests / ridges / lakes) is painted in a separate pale-parchment `H3HexagonLayer` synthesized client-side from the obcina polygons via `h3.polygonToCells` minus `pops`.
+- **Suggestion pins** — pre-baked `building_suggestions.json` + FRO (degraded-area) GeoJSON layered on top of the demand heatmap when a category filter is active. Tooltip explains the rationale per pin.
 
-### Mode C — "Občina" (Planner) — first to cut if Day 2 slips
-- Choropleth by občina: average score, % cells underserved.
-- Sortable ranking: top 5 / bottom 5 občine.
-- Time slider stretch: "Today vs after planned OPN" using Ljubljana ghosts data.
+### Mode C — "Občina" (Planner) — cut
+- Choropleth by občina + sortable ranking. Cut from the hackathon scope per §7 priority list; the obcina-fill polygon layer that low-zoom already uses serves the same intuition. **Not shipped.**
 
 ### Cross-cutting overlays
 - **Protected areas + unbuildable terrain** (TASKS §B4). Diagonal-hatch pattern over Natura 2000, zavarovana območja, and high-slope mountain terrain (DEM-derived). Score remains visible underneath at 0.5 alpha; investor mode skips these cells when ranking demand. Toggleable.
@@ -275,10 +274,10 @@ The hackathon is two consecutive build days. Below is the recommended order — 
 | Late afternoon | Demo script, slides, narrative, deploy final build |
 | Submission | Final upload + presentation |
 
-### Cut-list priority (if behind)
-1. First cut: Mode C (Občina choropleth)
-2. Second cut: Ghosts overlay (move to SLO4D polish)
-3. Never cut: Mode A scorecard, address search, base hex layer
+### Cut-list priority (resolved)
+1. **Cut**: Mode C (Občina choropleth) — never built; obcina low-zoom fill carries the planner intuition.
+2. **Cut**: Ghosts overlay (deferred to SLO4D polish window, mock-data approach if it ships).
+3. **Shipped**: Mode A scorecard, address search, base hex layer, Mode B investor view (palette + filter + unpopulated layer + suggestion pins).
 
 ### Post-hackathon (~3.5 weeks before SLO4D on June 9)
 Add: real bike costing (Valhalla `bicycle` profile), more občine for ghosts overlay, planner mode, performance tune, public landing page with marketing copy, real PIS scraping for ghosts. **No EN translation — UI is Slovenian only.**
