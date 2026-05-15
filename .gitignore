@@ -1,0 +1,43 @@
+# Node / Next.js
+node_modules/
+.next/
+out/
+dist/
+.pnpm-store/
+.npm/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+.python-version
+.pytest_cache/
+.mypy_cache/
+
+# Env files (never commit)
+.env
+.env.local
+.env.*.local
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+
+# Build outputs
+*.log
+coverage/
+
+# Raw data — too large for git; pull via curls in data/DATA_SOURCES.md
+data/15min-slo/*.pbf
+data/15min-slo/*.gpkg
+# (keep the smaller geojsons checked in for now; remove these lines to ignore them too)
+# data/15min-slo/*.geojson
+
+# Local Valhalla tile builds
+backend/valhalla/tiles/
+backend/valhalla/custom_files/
