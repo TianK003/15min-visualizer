@@ -6,6 +6,7 @@ import { cellScore, amenitiesForPoint, type CellScoreRow, type AmenityForPoint }
 import { isochrone, route } from "@/lib/valhalla";
 import { CATEGORIES, type CategoryId } from "@/lib/categories";
 import { decodePolyline } from "@/lib/polyline";
+import { pointInFeature } from "@/lib/geo";
 
 export type RoutePath = {
   shape: [number, number][];
@@ -40,36 +41,9 @@ const EMPTY_AMENITIES: AmenityByMode = { walk: [], bike: [] };
 /** Cap on simultaneous routes per category click. */
 const MAX_PATHS_PER_CATEGORY = 25;
 
-// Server returns amenities whose own iso polygon contains the click point
-// ("amenities for which the user is reachable"). On a symmetric pedestrian
-// graph that's nearly equivalent to "amenities the user can reach"; on the
-// bicycle graph (one-way streets, slope-adjusted speed) the two diverge at
-// the polygon edges. Clip the visible set to the user-centered iso so what's
-// rendered matches the polygon the user sees. Holes are not handled —
-// Valhalla pedestrian/bike isos don't currently emit interior rings.
-function pointInRing(lng: number, lat: number, ring: number[][]): boolean {
-  let inside = false;
-  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
-    const [xi, yi] = ring[i];
-    const [xj, yj] = ring[j];
-    const intersect =
-      (yi > lat) !== (yj > lat) &&
-      lng < ((xj - xi) * (lat - yi)) / (yj - yi) + xi;
-    if (intersect) inside = !inside;
-  }
-  return inside;
-}
-
-function pointInFeature(lng: number, lat: number, f: GeoJSON.Feature): boolean {
-  const g = f.geometry;
-  if (g.type === "Polygon") {
-    return pointInRing(lng, lat, g.coordinates[0]);
-  }
-  if (g.type === "MultiPolygon") {
-    return g.coordinates.some((poly) => pointInRing(lng, lat, poly[0]));
-  }
-  return false;
-}
+// pointInFeature lives in lib/geo.ts — clip the visible amenity set to the
+// user-centered iso polygon so the rendered dots match what the polygon
+// visually says is reachable.
 
 export default function Scorecard({
   h3id, mode, originLngLat, onClose, onIsochrone, onRoute, onAmenities,
@@ -84,6 +58,9 @@ export default function Scorecard({
   const [isoLoading, setIsoLoading] = useState(false);
   const [activeCat, setActiveCat] = useState<CategoryId | null>(null);
   const [routeLoading, setRouteLoading] = useState<CategoryId | null>(null);
+  // Which row's "podrobnosti" expansion is open. At most one at a time —
+  // expanding a new row collapses the previous.
+  const [expandedCat, setExpandedCat] = useState<CategoryId | null>(null);
 
   // Routing origin: use the exact address point when provided, otherwise the
   // cell centroid. The score still belongs to the cell (h3id) — only the
@@ -256,7 +233,6 @@ export default function Scorecard({
       : `Prikaži dosegljivost ${isoLabel}`;
   const displayScore = cell ? (mode === "bike" ? cell.bike_score : cell.walk_score) : 0;
   const displayBucket = bucketFor(displayScore);
-  const activeAmenities = visibleAmenities[mode];
 
   return (
     <aside className="scorecard" role="dialog" aria-label="Skor celice">
@@ -273,10 +249,11 @@ export default function Scorecard({
             </div>
             <div className="scorecard-sub">
               {mode === "bike" ? "15-min skor (kolo)" : "15-min skor (hoja)"}
-              <br />
-              <code>{h3id.slice(0, 10)}…</code>
               {cell.population != null && (
-                <> · {Math.round(cell.population * 100) / 100} prebivalcev</>
+                <>
+                  <br />
+                  {Math.round(cell.population * 100) / 100} prebivalcev
+                </>
               )}
             </div>
           </div>
@@ -289,23 +266,63 @@ export default function Scorecard({
               const reachable = val !== null;
               const isActive = activeCat === c.id;
               const isLoading = routeLoading === c.id;
+              const isExpanded = expandedCat === c.id;
+              // Top 10 reachable amenities with a real (non-generic) name —
+              // strip those whose name is just the category label (which is
+              // what amenitiesForPoint falls back to when OSM has no name).
+              const namedAmenities = visibleAmenities[mode]
+                .filter((a) => a.category === c.id)
+                .filter((a) => a.name && a.name.trim().toLowerCase() !== c.label.toLowerCase())
+                .slice(0, 10);
               return (
-                <button
-                  type="button"
-                  key={c.id}
-                  className={`scorecard-row ${reachable ? "ok" : "miss"} ${isActive ? "active" : ""}`}
-                  onClick={() => onRowClick(c.id, reachable)}
-                  disabled={!reachable}
-                  aria-pressed={isActive}
-                  data-cat={c.id}
-                >
-                  <span className="ico" aria-hidden>{c.icon}</span>
-                  <span className="cat">{c.label}</span>
-                  <span className="check" aria-label={reachable ? "dosegljivo" : "nedosegljivo"}>
-                    {isLoading ? "…" : reachable ? "✓" : "—"}
-                  </span>
-                  <span className="time">{val !== null ? `${val} min` : ""}</span>
-                </button>
+                <div key={c.id}>
+                  <div className="scorecard-row-line">
+                    <button
+                      type="button"
+                      className={`scorecard-row ${reachable ? "ok" : "miss"} ${isActive ? "active" : ""}`}
+                      onClick={() => onRowClick(c.id, reachable)}
+                      disabled={!reachable}
+                      aria-pressed={isActive}
+                      data-cat={c.id}
+                    >
+                      <span className="ico" aria-hidden>{c.icon}</span>
+                      <span className="cat">{c.label}</span>
+                      <span className="check" aria-label={reachable ? "dosegljivo" : "nedosegljivo"}>
+                        {isLoading ? "…" : reachable ? "✓" : "—"}
+                      </span>
+                      <span className="time">{val !== null ? `${val} min` : ""}</span>
+                    </button>
+                    <button
+                      type="button"
+                      className={`scorecard-row-toggle ${isExpanded ? "is-open" : ""}`}
+                      onClick={() => setExpandedCat(isExpanded ? null : c.id)}
+                      aria-expanded={isExpanded}
+                      aria-label={isExpanded ? "Skrij podrobnosti" : "Pokaži podrobnosti"}
+                      title="Podrobnosti"
+                    >
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                        <polyline points="6 9 12 15 18 9" />
+                      </svg>
+                    </button>
+                  </div>
+                  {isExpanded && (
+                    <div className="scorecard-row-detail">
+                      <p className="cat-desc">{c.description}</p>
+                      {namedAmenities.length > 0 ? (
+                        <ol className="cat-amenities">
+                          {namedAmenities.map((a) => (
+                            <li key={a.amenity_id}>
+                              <span className="cat-amenity-name">{a.name}</span>
+                              <span className="cat-amenity-t">{a.walk_min} min</span>
+                            </li>
+                          ))}
+                        </ol>
+                      ) : (
+                        <p className="cat-empty">Brez imenovanih lokacij v dosegu.</p>
+                      )}
+                    </div>
+                  )}
+                </div>
               );
             })}
           </div>
@@ -319,23 +336,6 @@ export default function Scorecard({
             {buttonText}
           </button>
 
-          {activeAmenities.length > 0 && (
-            <details className="amenities-detail">
-              <summary>{activeAmenities.length} dosegljivih lokacij</summary>
-              <ul className="amenities-list">
-                {activeAmenities.slice(0, 25).map((a) => (
-                  <li key={a.amenity_id}>
-                    <span className="dot" data-cat={a.category} />
-                    <span className="name">{a.name ?? a.category}</span>
-                    <span className="t">{a.walk_min} min</span>
-                  </li>
-                ))}
-                {activeAmenities.length > 25 && (
-                  <li className="more">… in {activeAmenities.length - 25} več</li>
-                )}
-              </ul>
-            </details>
-          )}
         </>
       )}
     </aside>

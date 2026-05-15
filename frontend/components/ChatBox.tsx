@@ -76,7 +76,7 @@ export default function ChatBox({ onSelectH3, flyToCoord }: Props) {
           console.error("H3 conversion error:", h3Err);
         }
       }
-    } catch (err) {
+    } catch {
       setMessages(prev => [...prev, { role: "assistant", content: "Prišlo je do napake pri iskanju." }]);
     } finally {
       setLoading(false);
@@ -85,12 +85,12 @@ export default function ChatBox({ onSelectH3, flyToCoord }: Props) {
 
   if (!open) {
     return (
-      <button 
+      <button
         className="chat-toggle"
         onClick={() => setOpen(true)}
-        aria-label="Odpri AI asistenta"
+        aria-label="Odpri AI svetovalca"
       >
-        ✨ Najdi mi dom
+        ✨ AI svetovalec
       </button>
     );
   }
@@ -98,7 +98,7 @@ export default function ChatBox({ onSelectH3, flyToCoord }: Props) {
   return (
     <div className="chat-box">
       <div className="chat-header">
-        <h3>✨ AI Asistent</h3>
+        <h3>✨ AI svetovalec</h3>
         <button onClick={() => setOpen(false)} aria-label="Zapri">×</button>
       </div>
       

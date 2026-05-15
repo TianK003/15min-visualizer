@@ -2,7 +2,10 @@
 
 // "Od kod podatki?" — D6 provenance panel (P0 per TASKS).
 // Plain-Slovenian dataset cards, methodology summary, reproducibility footer,
-// privacy badge, links to /api-docs (Swagger UI) and the raw OpenAPI JSON.
+// privacy badge, links to /api-docs (Swagger UI) and the raw OpenAPI JSON,
+// and an inline theme toggle (D8).
+
+import ThemeToggle from "@/components/ThemeToggle";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
 const SHA = process.env.NEXT_PUBLIC_GIT_SHA;
@@ -112,12 +115,20 @@ export default function IzvorPodatkov({ onClose }: Props) {
         <h3>Tehnične podrobnosti</h3>
         <ul>
           <li>
-            <a href="/api-docs">REST API (Swagger UI) →</a>
+            <a href="/api-docs"><b>REST API — Swagger UI</b></a> · Next.js poti (
+            <code>/api/llm</code>, <code>/api/valhalla</code>) + tabele Supabase
+          </li>
+          <li>
+            <a href="/openapi.json" target="_blank" rel="noopener noreferrer">
+              OpenAPI 3.1 spec (JSON) ↗
+            </a>{" "}
+            · ročno vzdrževana specifikacija za Next.js poti
           </li>
           <li>
             <a href={`${SUPABASE_URL}/rest/v1/`} target="_blank" rel="noopener noreferrer">
-              OpenAPI spec (JSON) ↗
-            </a>
+              Supabase PostgREST spec ↗
+            </a>{" "}
+            · samodejno generirano iz shema migracij
           </li>
           <li>
             GitHub commit{" "}
@@ -130,6 +141,11 @@ export default function IzvorPodatkov({ onClose }: Props) {
             )}
           </li>
         </ul>
+      </section>
+
+      <section className="provenance-appearance">
+        <h3>Videz</h3>
+        <ThemeToggle variant="inline" />
       </section>
 
       <footer className="provenance-foot">

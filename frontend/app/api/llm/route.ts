@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import * as h3 from "h3-js";
-import { getSupabase } from "@/lib/supabase";
 
 export const runtime = "nodejs";
 
@@ -130,7 +129,7 @@ Do NOT wrap the JSON in markdown blocks. Output raw JSON only.`;
       // Strip markdown code blocks if any
       const cleaned = content.replace(/^```json\s*/, '').replace(/```\s*$/, '').trim();
       resultSpec = JSON.parse(cleaned);
-    } catch (e) {
+    } catch {
       return NextResponse.json({ error: "Failed to parse LLM response", raw: llmData.choices[0].message.content }, { status: 500 });
     }
 
