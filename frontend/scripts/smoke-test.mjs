@@ -38,6 +38,19 @@ async function main() {
   await shot(page, "01-country");
   console.log("✓ map renders");
 
+  // Global mode toggle: present in 15-min view, hidden in population, restored after switching back.
+  const globalToggleVisible = await page.locator(".mode-toggle-global").isVisible();
+  if (!globalToggleVisible) throw new Error("Global .mode-toggle-global not visible by default");
+  await page.locator('.view-switch button:has-text("Poseljenost")').click({ force: true });
+  await page.waitForTimeout(200);
+  const hiddenInPop = await page.locator(".mode-toggle-global").count();
+  if (hiddenInPop !== 0) throw new Error("Global mode toggle should not render in population view");
+  await page.locator('.view-switch button:has-text("15-min")').click({ force: true });
+  await page.waitForTimeout(200);
+  const visibleAgain = await page.locator(".mode-toggle-global").isVisible();
+  if (!visibleAgain) throw new Error("Global mode toggle should reappear when switching back to 15-min");
+  console.log("✓ global mode toggle: visible in 15-min, hidden in Poseljenost, restored on return");
+
   // Skip the Photon dropdown smoke — flaky network and not required for backend coverage.
   // Address search functionality is exercised via the lat/lng paste route in manual tests.
 

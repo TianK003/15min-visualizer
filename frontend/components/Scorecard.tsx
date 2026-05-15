@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import * as h3 from "h3-js";
 import { cellScore, amenitiesForPoint, type CellScoreRow, type AmenityForPoint } from "@/lib/supabase";
 import { isochrone, route } from "@/lib/valhalla";
@@ -22,7 +22,6 @@ type Mode = "walk" | "bike";
 type Props = {
   h3id: string | null;
   mode: Mode;
-  onModeChange: (m: Mode) => void;
   onClose: () => void;
   onIsochrone: (poly: GeoJSON.Feature | null) => void;
   onRoute: (set: RouteSet | null) => void;
@@ -37,8 +36,39 @@ const EMPTY_AMENITIES: AmenityByMode = { walk: [], bike: [] };
 /** Cap on simultaneous routes per category click. */
 const MAX_PATHS_PER_CATEGORY = 25;
 
+// Server returns amenities whose own iso polygon contains the click point
+// ("amenities for which the user is reachable"). On a symmetric pedestrian
+// graph that's nearly equivalent to "amenities the user can reach"; on the
+// bicycle graph (one-way streets, slope-adjusted speed) the two diverge at
+// the polygon edges. Clip the visible set to the user-centered iso so what's
+// rendered matches the polygon the user sees. Holes are not handled —
+// Valhalla pedestrian/bike isos don't currently emit interior rings.
+function pointInRing(lng: number, lat: number, ring: number[][]): boolean {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const [xi, yi] = ring[i];
+    const [xj, yj] = ring[j];
+    const intersect =
+      (yi > lat) !== (yj > lat) &&
+      lng < ((xj - xi) * (lat - yi)) / (yj - yi) + xi;
+    if (intersect) inside = !inside;
+  }
+  return inside;
+}
+
+function pointInFeature(lng: number, lat: number, f: GeoJSON.Feature): boolean {
+  const g = f.geometry;
+  if (g.type === "Polygon") {
+    return pointInRing(lng, lat, g.coordinates[0]);
+  }
+  if (g.type === "MultiPolygon") {
+    return g.coordinates.some((poly) => pointInRing(lng, lat, poly[0]));
+  }
+  return false;
+}
+
 export default function Scorecard({
-  h3id, mode, onModeChange, onClose, onIsochrone, onRoute, onAmenities,
+  h3id, mode, onClose, onIsochrone, onRoute, onAmenities,
 }: Props) {
   const [cell, setCell] = useState<CellScoreRow | null>(null);
   const [amenities, setAmenities] = useState<AmenityByMode>(EMPTY_AMENITIES);
@@ -102,11 +132,23 @@ export default function Scorecard({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [h3id]);
 
+  // Filter both amenity sets to the user-centered iso polygon so the dots,
+  // the <details> list, and the routes drawn on category-click stay in sync
+  // with what the polygon visually says is "reachable in 15 min".
+  const visibleAmenities = useMemo<AmenityByMode>(() => {
+    const filterOne = (set: AmenityForPoint[], iso: GeoJSON.Feature | null) =>
+      iso ? set.filter((a) => pointInFeature(a.lng, a.lat, iso)) : set;
+    return {
+      walk: filterOne(amenities.walk, isos.walk),
+      bike: filterOne(amenities.bike, isos.bike),
+    };
+  }, [amenities, isos]);
+
   // Mode toggle: re-publish active polygon + amenities + re-fetch active route.
   useEffect(() => {
     if (!h3id) return;
     onIsochrone(isoVisible ? isos[mode] : null);
-    onAmenities(isoVisible ? amenities[mode] : null);
+    onAmenities(isoVisible ? visibleAmenities[mode] : null);
     if (activeCat) void fetchRoutesForCategory(activeCat);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode]);
@@ -114,9 +156,9 @@ export default function Scorecard({
   // Whenever isos / visibility / amenity sets land, sync to parent.
   useEffect(() => {
     onIsochrone(isoVisible ? isos[mode] : null);
-    onAmenities(isoVisible ? amenities[mode] : null);
+    onAmenities(isoVisible ? visibleAmenities[mode] : null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isos, isoVisible, amenities]);
+  }, [isos, isoVisible, visibleAmenities]);
 
   const toggleIsochrones = async () => {
     if (!h3id) return;
@@ -144,7 +186,7 @@ export default function Scorecard({
 
   const fetchRoutesForCategory = async (cat: CategoryId) => {
     if (!h3id) return;
-    const activeAmenities = amenities[mode];
+    const activeAmenities = visibleAmenities[mode];
     if (activeAmenities.length === 0) return;
     const targets = activeAmenities.filter((a) => a.category === cat).slice(0, MAX_PATHS_PER_CATEGORY);
     if (targets.length === 0) return;
@@ -201,7 +243,7 @@ export default function Scorecard({
       : `Prikaži dosegljivost ${isoLabel}`;
   const displayScore = cell ? (mode === "bike" ? cell.bike_score : cell.walk_score) : 0;
   const displayBucket = bucketFor(displayScore);
-  const activeAmenities = amenities[mode];
+  const activeAmenities = visibleAmenities[mode];
 
   return (
     <aside className="scorecard" role="dialog" aria-label="Skor celice">
@@ -253,25 +295,6 @@ export default function Scorecard({
                 </button>
               );
             })}
-          </div>
-
-          <div className="mode-toggle" role="group" aria-label="Način">
-            <button
-              type="button"
-              className={mode === "walk" ? "active" : ""}
-              onClick={() => onModeChange("walk")}
-              aria-pressed={mode === "walk"}
-            >
-              Hoja
-            </button>
-            <button
-              type="button"
-              className={mode === "bike" ? "active" : ""}
-              onClick={() => onModeChange("bike")}
-              aria-pressed={mode === "bike"}
-            >
-              Kolo
-            </button>
           </div>
 
           <button

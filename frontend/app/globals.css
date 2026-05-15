@@ -144,6 +144,24 @@ body {
   font-size: 13px;
 }
 
+/* Global Hoja/Kolo toggle — stacked above .view-switch, only in 15-min view. */
+.mode-toggle-global {
+  position: absolute;
+  right: 16px;
+  bottom: 60px;
+  background: rgba(255, 255, 255, 0.92);
+  padding: 4px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.12);
+  z-index: 10;
+  font-size: 13px;
+  margin: 0;
+}
+
+.mode-toggle-global button {
+  padding: 6px 14px;
+  font-size: 13px;
+}
+
 .view-switch button {
   appearance: none;
   border: none;

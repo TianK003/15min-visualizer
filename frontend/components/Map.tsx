@@ -9,15 +9,16 @@ import { GeoJsonLayer, PathLayer, TextLayer, ScatterplotLayer } from "@deck.gl/l
 import { HeatmapLayer } from "@deck.gl/aggregation-layers";
 import { H3HexagonLayer } from "@deck.gl/geo-layers";
 import * as h3 from "h3-js";
-import Scorecard, { type RouteSet } from "@/components/Scorecard";
+import Scorecard, { type RouteSet, type RoutePath } from "@/components/Scorecard";
 import AddressSearch from "@/components/AddressSearch";
 import IzvorPodatkov from "@/components/IzvorPodatkov";
 import { categoryById } from "@/lib/categories";
 import type { AmenityForPoint } from "@/lib/supabase";
 
-// All category paths use this single contrast color: slate-900 reads cleanly
-// on every score-bucket fill (green / yellow / orange / red at α 128).
-const PATH_COLOR: [number, number, number, number] = [15, 23, 42, 240]; // #0f172a
+// Path color is derived per-render from the active category (see layers effect).
+// α 0.6 (153/255) keeps the path readable while letting the basemap show through.
+const PATH_ALPHA = 153;
+const FALLBACK_RGB: [number, number, number] = [120, 120, 120];
 const DOT_HALO: [number, number, number, number] = [255, 255, 255, 230];
 
 const BASEMAP_STYLE = "https://tiles.openfreemap.org/styles/positron";
@@ -406,12 +407,14 @@ export default function SloveniaMap() {
     }
 
     if (routeSet && routeSet.paths.length > 0) {
+      const catRgb = categoryById(routeSet.categoryId)?.color ?? FALLBACK_RGB;
+      const PATH_RGBA: [number, number, number, number] = [catRgb[0], catRgb[1], catRgb[2], PATH_ALPHA];
       layers.push(
         new PathLayer<{ path: [number, number][] }>({
           id: "routes-to-amenities",
           data: routeSet.paths.map((p) => ({ path: p.shape })),
           getPath: (d) => d.path,
-          getColor: PATH_COLOR,
+          getColor: PATH_RGBA,
           getWidth: 4,
           widthUnits: "pixels",
           widthMinPixels: 3,
@@ -441,6 +444,29 @@ export default function SloveniaMap() {
           lineWidthMinPixels: 1.5,
           pickable: true,
           onHover: ({ object }) => setHoveredAmenity(object ?? null),
+        }),
+      );
+    }
+
+    // Larger same-color markers at each active-category path's destination,
+    // rendered above amenity-dots so the visual relationship "this path leads
+    // to this dot" is unambiguous. Not pickable — hover still falls through
+    // to the underlying amenity-dots layer for the name label.
+    if (routeSet && routeSet.paths.length > 0) {
+      const catRgb = categoryById(routeSet.categoryId)?.color ?? FALLBACK_RGB;
+      layers.push(
+        new ScatterplotLayer<RoutePath["end"]>({
+          id: "path-endpoints",
+          data: routeSet.paths.map((p) => p.end),
+          getPosition: (d) => [d.lng, d.lat],
+          getFillColor: [catRgb[0], catRgb[1], catRgb[2], 240],
+          getRadius: 9,
+          radiusUnits: "pixels",
+          radiusMinPixels: 7,
+          stroked: true,
+          getLineColor: [255, 255, 255, 240],
+          lineWidthMinPixels: 2,
+          pickable: false,
         }),
       );
     }
@@ -534,6 +560,27 @@ export default function SloveniaMap() {
         </div>
       )}
 
+      {view === "15min" && (
+        <div className="mode-toggle mode-toggle-global" role="group" aria-label="Način">
+          <button
+            type="button"
+            className={mode === "walk" ? "active" : ""}
+            onClick={() => setMode("walk")}
+            aria-pressed={mode === "walk"}
+          >
+            Hoja
+          </button>
+          <button
+            type="button"
+            className={mode === "bike" ? "active" : ""}
+            onClick={() => setMode("bike")}
+            aria-pressed={mode === "bike"}
+          >
+            Kolo
+          </button>
+        </div>
+      )}
+
       <div className="view-switch" role="group" aria-label="Pogled">
         <button
           type="button"
@@ -556,7 +603,6 @@ export default function SloveniaMap() {
       <Scorecard
         h3id={selectedH3}
         mode={mode}
-        onModeChange={setMode}
         onClose={() => {
           setSelectedH3(null);
           setHoveredAmenity(null);
