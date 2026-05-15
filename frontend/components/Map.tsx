@@ -632,33 +632,26 @@ export default function SloveniaMap() {
         }),
       );
 
-      // Selected-cell highlight: a second H3HexagonLayer painted on top of
-      // the score layer with full-alpha fill + thick dark border so the
-      // user can pick the clicked cell out of the heatmap at a glance.
+      // Selected-cell highlight: stroke-only outline to complement the
+      // gradient mesh without obscuring it. The user can pick the clicked
+      // cell out of the map at a glance via the dark 2.5px border.
       // Rendered at the *current aggregated resolution*, not res-10, so it
       // visually matches the surrounding score cells.
       if (selectedH3) {
         const parent = h3.cellToParent(selectedH3, currentRes);
-        const matchingScore = aggregatedScores.find((c) => c.h3 === parent);
-        const score = matchingScore
-          ? (mode === "bike" ? matchingScore.b : matchingScore.w)
-          : 4;
-        const [hr, hg, hb] = colorForScore(score);
         layers.push(
           new H3HexagonLayer<{ h3: string }>({
             id: "selected-hex",
             data: [{ h3: parent }],
             getHexagon: (d) => d.h3,
             stroked: true,
-            filled: true,
+            filled: false,
             extruded: false,
-            getFillColor: [hr, hg, hb, 220],
             getLineColor: [17, 24, 39, 255],
             getLineWidth: 2.5,
             lineWidthUnits: "pixels",
             lineWidthMinPixels: 2.5,
             pickable: false,
-            updateTriggers: { getFillColor: [score] },
           }),
         );
       }
