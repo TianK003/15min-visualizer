@@ -20,6 +20,7 @@ import type { AmenityForPoint } from "@/lib/supabase";
 const PATH_ALPHA = 153;
 const FALLBACK_RGB: [number, number, number] = [120, 120, 120];
 const DOT_HALO: [number, number, number, number] = [255, 255, 255, 230];
+import ChatBox from "@/components/ChatBox";
 
 const BASEMAP_STYLE = "https://tiles.openfreemap.org/styles/positron";
 
@@ -511,6 +512,7 @@ export default function SloveniaMap() {
 
   return (
     <>
+      <ChatBox onSelectH3={setSelectedH3} flyToCoord={flyToCoord} />
       <div id="map-root" ref={containerRef} />
 
       <AddressSearch onPick={flyToCoord} />
@@ -636,6 +638,8 @@ export default function SloveniaMap() {
           Podatki s strežnika niso dosegljivi ({cellsError}). Prikazane so vzorčne celice.
         </div>
       )}
+
+
     </>
   );
 }
