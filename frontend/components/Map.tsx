@@ -14,10 +14,19 @@ import AddressSearch, { type AddressSearchHandle } from "@/components/AddressSea
 import IzvorPodatkov from "@/components/IzvorPodatkov";
 import ChatBox from "@/components/ChatBox";
 import ThemeToggle from "@/components/ThemeToggle";
-import { categoryById } from "@/lib/categories";
+import { categoryById, CATEGORIES } from "@/lib/categories";
 import type { AmenityForPoint } from "@/lib/supabase";
 import { useTheme } from "@/lib/theme";
 import { pointInFeature } from "@/lib/geo";
+import { ZONE_REASONS, type Suggestion } from "@/lib/suggestions";
+
+type GroupedPin = {
+  lat: number;
+  lng: number;
+  zoneCode: string;
+  zoneDesc: string;
+  items: Suggestion[];
+};
 
 // Path color is derived per-render from the active category (see layers effect).
 // α 0.6 (153/255) keeps the path readable while letting the basemap show through.
@@ -114,13 +123,15 @@ const LJUBLJANA_BBOX = {
 };
 const H3_BASE_RES = 10;
 
-type View = "15min" | "population";
+type View = "15min" | "population" | "investor";
 export type Mode = "walk" | "bike";
 
 /** Score JSON shape: {h3, w, b} — walk & bike scores baked together. */
 type ScoreCell = { h3: string; w: number; b: number };
 type PopCell = { h3: string; pop: number };
 type PopPoint = { position: [number, number]; pop: number };
+type DemandCell = { h3: string; walkDemand: number; bikeDemand: number };
+type DemandThresholds = { p50: number; p75: number; p90: number };
 
 function zoomToResolution(zoom: number): number {
   if (zoom < 10) return 6;
@@ -149,7 +160,28 @@ function aggregateMean(cells: ScoreCell[], targetRes: number): ScoreCell[] {
   return out;
 }
 
+function aggregateDemand(cells: DemandCell[], targetRes: number): DemandCell[] {
+  if (targetRes >= H3_BASE_RES) return cells;
+  const groups = new Map<string, { wd: number; bd: number; n: number }>();
+  for (const c of cells) {
+    const parent = h3.cellToParent(c.h3, targetRes);
+    const g = groups.get(parent);
+    if (g) { g.wd += c.walkDemand; g.bd += c.bikeDemand; g.n++; }
+    else groups.set(parent, { wd: c.walkDemand, bd: c.bikeDemand, n: 1 });
+  }
+  const out: DemandCell[] = [];
+  groups.forEach((g, hex) => out.push({ h3: hex, walkDemand: g.wd / g.n, bikeDemand: g.bd / g.n }));
+  return out;
+}
+
 type Rgba = [number, number, number, number];
+
+function colorForDemand(demand: number, t: DemandThresholds): Rgba {
+  if (demand >= t.p90) return [6, 182, 212, 128];   // cyan — visok potencial
+  if (demand >= t.p75) return [59, 130, 246, 128];  // modra — srednji
+  if (demand >= t.p50) return [99, 102, 241, 128];  // indigo-modra — nizek
+  return [139, 92, 246, 128];                        // vijolična — zanemarljiv
+}
 
 function colorForScore(score: number): Rgba {
   if (score >= 6) return [16, 185, 129, 128];
@@ -301,6 +333,15 @@ export default function SloveniaMap() {
   // segments older than `currentTime - trailLength`; with trailLength = 1e9
   // every revealed segment stays visible permanently.
   const [animTime, setAnimTime] = useState(0);
+  // Investor view state — per-category scores, the active category filter,
+  // and the precomputed building-suggestion pins shown on top of the demand
+  // heatmap when a category is active.
+  const [catScores, setCatScores] = useState<Map<string, number[]>>(new Map());
+  const [investorCat, setInvestorCat] = useState<number | null>(null);
+  const [suggestionPins, setSuggestionPins] = useState<Suggestion[]>([]);
+  const [buildingSuggestions, setBuildingSuggestions] = useState<
+    Record<string, { lat: number; lng: number; source: string; demand: number; members: number }[]>
+  >({});
 
   // Fetch real scores; fall back to dummy if not yet baked.
   useEffect(() => {
@@ -355,7 +396,7 @@ export default function SloveniaMap() {
 
   // Lazy-load population on first switch. Deps deliberately omit popsLoading.
   useEffect(() => {
-    if (view !== "population" || pops.length > 0) return;
+    if ((view !== "population" && view !== "investor") || pops.length > 0) return;
     let cancelled = false;
     setPopsLoading(true);
     (async () => {
@@ -375,6 +416,17 @@ export default function SloveniaMap() {
       cancelled = true;
     };
   }, [view, pops.length]);
+
+  // Lazy-load per-category scores when investor category filter is first used.
+  useEffect(() => {
+    if (view !== "investor" || investorCat === null || catScores.size > 0) return;
+    fetch("/data/cell_cat_scores.json")
+      .then((r) => r.json())
+      .then((data: { h3: string; c: number[] }[]) => {
+        setCatScores(new Map(data.map((d) => [d.h3, d.c])));
+      })
+      .catch((err) => console.warn("cat_scores fetch failed:", err));
+  }, [view, investorCat, catScores.size]);
 
   // Initialize map once. Restore from URL hash if present.
   useEffect(() => {
@@ -506,6 +558,20 @@ export default function SloveniaMap() {
     return () => cancelAnimationFrame(raf);
   }, [animatedPaths]);
 
+  // Keyed by h3 for O(1) child lookup in investor onClick.
+  const cellsMap = useMemo(() => new Map(cells.map((c) => [c.h3, c])), [cells]);
+
+  const groupedPins = useMemo<GroupedPin[]>(() => {
+    const map = new Map<string, GroupedPin>();
+    for (const s of suggestionPins) {
+      const key = `${s.lat.toFixed(5)},${s.lng.toFixed(5)}`;
+      const existing = map.get(key);
+      if (existing) existing.items.push(s);
+      else map.set(key, { lat: s.lat, lng: s.lng, zoneCode: s.zoneCode, zoneDesc: s.zoneDesc, items: [s] });
+    }
+    return Array.from(map.values());
+  }, [suggestionPins]);
+
   const popPoints = useMemo<PopPoint[]>(() => {
     if (pops.length === 0) return [];
     const out: PopPoint[] = new Array(pops.length);
@@ -515,6 +581,89 @@ export default function SloveniaMap() {
     }
     return out;
   }, [pops]);
+
+  const investorCells = useMemo<DemandCell[]>(() => {
+    if (pops.length === 0 || cells.length === 0) return [];
+    // Population is at res-9; distribute evenly across res-10 children.
+    const popMap = new Map(pops.map((p) => [p.h3, p.pop]));
+    const childCount = new Map<string, number>();
+    for (const c of cells) {
+      const p9 = h3.cellToParent(c.h3, 9);
+      childCount.set(p9, (childCount.get(p9) ?? 0) + 1);
+    }
+    const out: DemandCell[] = [];
+    for (const c of cells) {
+      const p9 = h3.cellToParent(c.h3, 9);
+      const parentPop = popMap.get(p9) ?? 0;
+      if (parentPop === 0) continue;
+      const pop = parentPop / (childCount.get(p9) ?? 1);
+
+      if (investorCat !== null && catScores.size > 0) {
+        // catScores is at res-9 — look up parent
+        const catArr = catScores.get(p9);
+        if (!catArr) continue;
+        const present = catArr[investorCat];
+        if (present >= 1) continue;
+        const d = pop * (1 - present);
+        out.push({ h3: c.h3, walkDemand: d, bikeDemand: d });
+      } else {
+        out.push({
+          h3: c.h3,
+          walkDemand: pop * (1 - c.w / 8),
+          bikeDemand: pop * (1 - c.b / 8),
+        });
+      }
+    }
+    return out;
+  }, [cells, pops, investorCat, catScores]);
+
+  const aggregatedInvestorCells = useMemo(
+    () => (showObcineFill ? [] : aggregateDemand(investorCells, currentRes)),
+    [investorCells, currentRes, showObcineFill],
+  );
+
+  const demandThresholds = useMemo<DemandThresholds>(() => {
+    if (aggregatedInvestorCells.length === 0) return { p50: 1, p75: 2, p90: 4 };
+    const vals = aggregatedInvestorCells
+      .map((c) => (mode === "walk" ? c.walkDemand : c.bikeDemand))
+      .sort((a, b) => a - b);
+    const n = vals.length;
+    return {
+      p50: vals[Math.floor(n * 0.50)],
+      p75: vals[Math.floor(n * 0.75)],
+      p90: vals[Math.floor(n * 0.90)],
+    };
+  }, [aggregatedInvestorCells, mode]);
+
+  // Lazy-load pre-computed building suggestions once when investor view is opened.
+  useEffect(() => {
+    if (view !== "investor" || Object.keys(buildingSuggestions).length > 0) return;
+    fetch("/data/building_suggestions.json")
+      .then((r) => r.json())
+      .then(setBuildingSuggestions)
+      .catch((err) => console.warn("building_suggestions fetch failed:", err));
+  }, [view, buildingSuggestions]);
+
+  // Show pins for the active category filter — instant, no network calls.
+  useEffect(() => {
+    if (view !== "investor" || investorCat === null) {
+      setSuggestionPins([]);
+      return;
+    }
+    const raw = buildingSuggestions[String(investorCat)] ?? [];
+    setSuggestionPins(
+      raw.map((s) => ({
+        categoryIndex: investorCat,
+        lat: s.lat,
+        lng: s.lng,
+        zoneCode: s.source === "fro" ? "FRO" : "OPN",
+        zoneDesc: s.source === "fro" ? "Degradirano območje" : "Predlagana lokacija",
+        distanceM: s.demand,   // repurpose field to carry demand for tooltip
+        source: (s.source === "fro" ? "fro" : "opn") as "fro" | "opn",
+        members: s.members,
+      })),
+    );
+  }, [view, investorCat, buildingSuggestions]);
 
   useEffect(() => {
     const overlay = overlayRef.current;
@@ -538,6 +687,72 @@ export default function SloveniaMap() {
           pickable: false,
         }),
       );
+    } else if (view === "investor") {
+      if (showObcineFill) {
+        layers.push(
+          new GeoJsonLayer<ObcinaProps>({
+            id: "investor-obcine",
+            data: OBCINE_URL,
+            stroked: true,
+            filled: true,
+            getFillColor: (f) => {
+              const p = f.properties ?? {};
+              const score = (mode === "bike" ? p.bike_mean : p.walk_mean) ?? p.mean_score ?? 0;
+              const nCells = p.n_cells ?? 1;
+              const d = (p.population ?? 0) * (1 - score / 8) / nCells;
+              return colorForDemand(d, demandThresholds);
+            },
+            getLineColor: [60, 60, 60, 200],
+            lineWidthMinPixels: 1,
+            pickable: false,
+            updateTriggers: { getFillColor: [mode, demandThresholds] },
+          }),
+        );
+      } else {
+        layers.push(
+          new GeoJsonLayer({
+            id: "investor-obcine-outline",
+            data: OBCINE_URL,
+            stroked: true,
+            filled: false,
+            lineWidthMinPixels: 1,
+            getLineColor: [80, 80, 80, 160],
+            pickable: false,
+          }),
+          new H3HexagonLayer<DemandCell>({
+            id: "investor-hex",
+            data: aggregatedInvestorCells,
+            pickable: true,
+            stroked: currentRes < H3_BASE_RES,
+            filled: true,
+            extruded: false,
+            getHexagon: (d) => d.h3,
+            getFillColor: (d) => colorForDemand(mode === "walk" ? d.walkDemand : d.bikeDemand, demandThresholds),
+            getLineColor: [255, 255, 255, 70],
+            lineWidthUnits: "pixels",
+            getLineWidth: 0.5,
+            updateTriggers: { getFillColor: [mode, demandThresholds] },
+            onClick: ({ object }) => {
+              if (!object) return;
+              if (h3.getResolution(object.h3) >= H3_BASE_RES) {
+                setSelectedH3(object.h3);
+                return;
+              }
+              // Show the res-10 child with the lowest walk score — this is what
+              // makes the investor hex red, so it's what the user expects to see.
+              const children = h3.cellToChildren(object.h3, H3_BASE_RES);
+              let worst = children[0];
+              let worstScore = cellsMap.get(worst)?.w ?? 8;
+              for (const c of children) {
+                const s = cellsMap.get(c)?.w ?? 8;
+                if (s < worstScore) { worstScore = s; worst = c; }
+              }
+              setSelectedH3(worst);
+            },
+          }),
+        );
+
+      }
     } else if (showObcineFill) {
       layers.push(
         new GeoJsonLayer<ObcinaProps>({
@@ -784,8 +999,65 @@ export default function SloveniaMap() {
       );
     }
 
-    overlay.setProps({ layers });
-  }, [aggregatedScores, popPoints, showObcineFill, currentRes, view, isoFeature, routeSet, amenityDots, hoveredAmenity, mode, selectedH3, originLngLat, animatedPaths, animTime]);
+    if (groupedPins.length > 0) {
+      const maxDemand = groupedPins.reduce(
+        (m, p) => Math.max(m, p.items[0]?.distanceM ?? 0), 1,
+      );
+      layers.push(
+        new ScatterplotLayer<GroupedPin>({
+          id: "suggestions",
+          data: groupedPins,
+          getPosition: (d) => [d.lng, d.lat],
+          getRadius: (d) => {
+            const demand = d.items[0]?.distanceM ?? 1;
+            return 3 + 5 * Math.sqrt(demand / maxDemand);
+          },
+          radiusUnits: "pixels",
+          radiusMinPixels: 3,
+          getFillColor: (d) => d.items[0]?.source === "fro" ? [239, 68, 68, 200] : [250, 204, 21, 200],
+          getLineColor: [255, 255, 255, 200],
+          lineWidthMinPixels: 1,
+          stroked: true,
+          pickable: true,
+          updateTriggers: { getRadius: groupedPins },
+        }),
+      );
+    }
+
+    overlay.setProps({ layers, getTooltip: suggestionTooltip });
+  }, [aggregatedScores, popPoints, aggregatedInvestorCells, demandThresholds, catScores, investorCat, groupedPins, cellsMap, showObcineFill, currentRes, view, isoFeature, routeSet, amenityDots, hoveredAmenity, mode, selectedH3, originLngLat, animatedPaths, animTime]);
+
+  const suggestionTooltip = ({ object, layer }: { object?: unknown; layer?: { id: string } | null }) => {
+    if (layer?.id !== "suggestions" || !object) return null;
+    const pin = object as GroupedPin;
+    const rows = pin.items.map((s, idx) => {
+      const cat = CATEGORIES[s.categoryIndex];
+      const reason =
+        ZONE_REASONS[s.zoneCode]?.[s.categoryIndex] ??
+        `Primerno za ${cat?.label.toLowerCase() ?? ""}`;
+      const demandStr = s.distanceM > 0 ? `Povpraševanje: ${Math.round(s.distanceM)}` : "";
+      const membersStr = s.members ? ` · ${s.members} območij` : "";
+      return `<div style="display:flex;gap:8px;align-items:flex-start;padding:5px 0;${idx > 0 ? "border-top:1px solid #f0f0f0;" : ""}">
+        <span style="font-size:16px;flex-shrink:0">${cat?.icon ?? "📍"}</span>
+        <div>
+          <div style="font-weight:600;font-size:13px">${cat?.label ?? ""}</div>
+          <div style="color:#555;font-size:12px;margin-top:1px">${reason}</div>
+          <div style="color:#999;font-size:11px;margin-top:2px">${demandStr}${membersStr}</div>
+        </div>
+      </div>`;
+    }).join("");
+    return {
+      html: `<div style="max-width:240px">
+        <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:#999;margin-bottom:4px">
+          ${pin.items[0]?.source === "fro" ? "🔴 Degradirano območje · Predlagana revitalizacija" : `OPN cona ${pin.zoneCode} · Predlagana gradnja`}
+        </div>${rows}</div>`,
+      style: {
+        background: "white", padding: "10px 12px", borderRadius: "10px",
+        boxShadow: "0 4px 16px rgba(0,0,0,0.15)", border: "1px solid rgba(0,0,0,0.06)",
+        fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+      },
+    };
+  };
 
   const flyToCoord = (lng: number, lat: number, targetZoom = 14, fromAddress = false) => {
     const map = mapRef.current;
@@ -857,6 +1129,51 @@ export default function SloveniaMap() {
             </div>
           )}
         </div>
+      ) : view === "investor" ? (
+        <div className={`legend ${legendOpen ? "is-open" : "is-collapsed"}`}>
+          <button
+            type="button"
+            className="legend-toggle"
+            onClick={() => setLegendOpen((o) => !o)}
+            aria-expanded={legendOpen}
+            aria-controls="legend-body"
+          >
+            <span>Investicijski potencial</span>
+            <svg
+              className="legend-chevron"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden
+            >
+              <polyline points="6 9 12 15 18 9" />
+            </svg>
+          </button>
+          {legendOpen && (
+            <div id="legend-body" className="legend-body">
+              <div className="legend-row">
+                <span className="legend-swatch" style={{ background: "rgb(6,182,212)" }} />
+                Visok
+              </div>
+              <div className="legend-row">
+                <span className="legend-swatch" style={{ background: "rgb(59,130,246)" }} />
+                Srednji
+              </div>
+              <div className="legend-row">
+                <span className="legend-swatch" style={{ background: "rgb(99,102,241)" }} />
+                Nizek
+              </div>
+              <div className="legend-row">
+                <span className="legend-swatch" style={{ background: "rgb(139,92,246)" }} />
+                Zanemarljiv
+              </div>
+              {popsLoading && <div className="legend-pop-scale">nalagam …</div>}
+            </div>
+          )}
+        </div>
       ) : (
         <div className={`legend legend-pop ${legendOpen ? "is-open" : "is-collapsed"}`}>
           <button
@@ -893,7 +1210,30 @@ export default function SloveniaMap() {
         </div>
       )}
 
-      {view === "15min" && (
+      {view === "investor" && (
+        <div className="investor-cat-filter" role="group" aria-label="Filter kategorije">
+          <button
+            type="button"
+            className={investorCat === null ? "active" : ""}
+            onClick={() => setInvestorCat(null)}
+          >
+            Vse
+          </button>
+          {CATEGORIES.map((cat, i) => (
+            <button
+              key={cat.id}
+              type="button"
+              className={investorCat === i ? "active" : ""}
+              onClick={() => setInvestorCat(investorCat === i ? null : i)}
+              title={cat.label}
+            >
+              {cat.icon}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {(view === "15min" || view === "investor") && (
         <div className="mode-toggle mode-toggle-global" role="group" aria-label="Način">
           <button
             type="button"
@@ -930,6 +1270,14 @@ export default function SloveniaMap() {
           aria-pressed={view === "population"}
         >
           Poseljenost
+        </button>
+        <button
+          type="button"
+          className={view === "investor" ? "active" : ""}
+          onClick={() => setView("investor")}
+          aria-pressed={view === "investor"}
+        >
+          Investitor
         </button>
       </div>
 

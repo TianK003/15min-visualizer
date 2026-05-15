@@ -732,6 +732,43 @@ button { font-family: inherit; }
   box-shadow: var(--shadow-lg);
 }
 
+/* ---- Investor category filter (investor view) ---- */
+.investor-cat-filter {
+  position: absolute;
+  right: 16px;
+  bottom: 110px;
+  display: flex;
+  gap: 3px;
+  background: rgba(255, 255, 255, 0.92);
+  border-radius: 12px;
+  padding: 5px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.12);
+  z-index: 10;
+}
+.investor-cat-filter button {
+  appearance: none;
+  border: none;
+  background: transparent;
+  font-size: 16px;
+  width: 32px;
+  height: 32px;
+  border-radius: 7px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 100ms ease;
+}
+.investor-cat-filter button:hover { background: rgba(0, 0, 0, 0.06); }
+.investor-cat-filter button.active { background: #111; color: #fff; }
+.investor-cat-filter button:first-child {
+  font-size: 11px;
+  font-weight: 700;
+  width: auto;
+  padding: 0 8px;
+  letter-spacing: 0.02em;
+}
+
 .banner {
   position: absolute;
   bottom: 64px;
