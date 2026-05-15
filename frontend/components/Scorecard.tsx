@@ -277,22 +277,23 @@ export default function Scorecard({
               const isActive = activeCat === c.id;
               const isLoading = routeLoading === c.id;
               return (
-                <button
-                  type="button"
-                  key={c.id}
-                  className={`scorecard-row ${reachable ? "ok" : "miss"} ${isActive ? "active" : ""}`}
-                  onClick={() => onRowClick(c.id, reachable)}
-                  disabled={!reachable}
-                  aria-pressed={isActive}
-                  data-cat={c.id}
-                >
-                  <span className="ico" aria-hidden>{c.icon}</span>
-                  <span className="cat">{c.label}</span>
-                  <span className="check" aria-label={reachable ? "dosegljivo" : "nedosegljivo"}>
-                    {isLoading ? "…" : reachable ? "✓" : "—"}
-                  </span>
-                  <span className="time">{val !== null ? `${val} min` : ""}</span>
-                </button>
+                <div key={c.id} className="scorecard-row-wrap">
+                  <button
+                    type="button"
+                    className={`scorecard-row ${reachable ? "ok" : "miss"} ${isActive ? "active" : ""}`}
+                    onClick={() => onRowClick(c.id, reachable)}
+                    disabled={!reachable}
+                    aria-pressed={isActive}
+                    data-cat={c.id}
+                  >
+                    <span className="ico" aria-hidden>{c.icon}</span>
+                    <span className="cat">{c.label}</span>
+                    <span className="check" aria-label={reachable ? "dosegljivo" : "nedosegljivo"}>
+                      {isLoading ? "…" : reachable ? "✓" : "—"}
+                    </span>
+                    <span className="time">{val !== null ? `${val} min` : ""}</span>
+                  </button>
+                </div>
               );
             })}
           </div>
@@ -334,4 +335,8 @@ function bucketFor(score: number): string {
   if (score >= 4) return "yellow";
   if (score >= 2) return "orange";
   return "red";
+}
+
+function formatDist(m: number): string {
+  return m < 1000 ? `${Math.round(m)} m` : `${(m / 1000).toFixed(1)} km`;
 }

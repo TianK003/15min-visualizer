@@ -311,10 +311,37 @@ body {
 .scorecard-sub code { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
 
 .scorecard-rows {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 4px;
   margin-bottom: 12px;
 }
+.scorecard-row-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.suggestion-btn {
+  appearance: none;
+  border: 1px solid rgba(250, 204, 21, 0.5);
+  background: rgba(254, 249, 195, 0.7);
+  border-radius: 6px;
+  font: inherit;
+  font-size: 11px;
+  color: #713f12;
+  padding: 3px 8px;
+  cursor: pointer;
+  text-align: left;
+  line-height: 1.4;
+  transition: background 100ms ease;
+}
+.suggestion-btn:hover { background: rgba(254, 240, 138, 0.9); }
+.suggestion-btn--fro {
+  border-color: rgba(239, 68, 68, 0.4);
+  background: rgba(254, 226, 226, 0.7);
+  color: #7f1d1d;
+}
+.suggestion-btn--fro:hover { background: rgba(254, 202, 202, 0.9); }
 /* Each row is a <button> — strip the default chrome and make it look like
    a clickable line. Disabled rows (miss / no amenity) stay non-interactive. */
 .scorecard-row {
@@ -447,6 +474,43 @@ body {
 }
 
 /* ---- Provenance link (D6) ---- */
+/* ---- Investor category filter (investor view) ---- */
+.investor-cat-filter {
+  position: absolute;
+  right: 16px;
+  bottom: 110px;
+  display: flex;
+  gap: 3px;
+  background: rgba(255, 255, 255, 0.92);
+  border-radius: 12px;
+  padding: 5px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.12);
+  z-index: 10;
+}
+.investor-cat-filter button {
+  appearance: none;
+  border: none;
+  background: transparent;
+  font-size: 16px;
+  width: 32px;
+  height: 32px;
+  border-radius: 7px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 100ms ease;
+}
+.investor-cat-filter button:hover { background: rgba(0, 0, 0, 0.06); }
+.investor-cat-filter button.active { background: #111; color: #fff; }
+.investor-cat-filter button:first-child {
+  font-size: 11px;
+  font-weight: 700;
+  width: auto;
+  padding: 0 8px;
+  letter-spacing: 0.02em;
+}
+
 .provenance-link {
   position: absolute;
   bottom: 16px;
