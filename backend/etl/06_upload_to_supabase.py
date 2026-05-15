@@ -164,7 +164,7 @@ def upload_isochrones(conn: psycopg.Connection, batch_size: int = 2000) -> None:
                 continue
             rows.append((
                 int(rec["amenity_id"]),
-                "pedestrian",
+                rec.get("mode", "pedestrian"),
                 int(rec["contour_min"]),
                 json.dumps(rec["geometry"]),
             ))
@@ -189,16 +189,18 @@ def upload_cell_scores(conn: psycopg.Connection) -> None:
     t = time.time()
     with conn.cursor() as cur:
         with cur.copy(
-            "copy cell_scores (h3, score, walk_min, bike_min, population) from stdin"
+            "copy cell_scores (h3, walk_score, bike_score, walk_min, bike_min, population) from stdin"
         ) as cp:
             for c in cells:
                 walk = c["walk_min"]
-                bike = [None if w is None else max(1, round(w / 2.5)) for w in walk]
+                bike = c.get("bike_min") or [None] * 8
                 walk_lit = "{" + ",".join("NULL" if v is None else str(int(v)) for v in walk) + "}"
                 bike_lit = "{" + ",".join("NULL" if v is None else str(int(v)) for v in bike) + "}"
                 pop = c.get("population")
                 pop_str = "\\N" if pop is None else f"{pop}"
-                cp.write(f"{c['h3']}\t{c['score']}\t{walk_lit}\t{bike_lit}\t{pop_str}\n")
+                walk_score = c.get("walk_score", c.get("score", 0))
+                bike_score = c.get("bike_score", 0)
+                cp.write(f"{c['h3']}\t{walk_score}\t{bike_score}\t{walk_lit}\t{bike_lit}\t{pop_str}\n")
     conn.commit()
     log(f"  ✓ {len(cells):,} cell_scores in {time.time()-t:.1f}s")
 

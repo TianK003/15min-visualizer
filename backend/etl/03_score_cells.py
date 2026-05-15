@@ -1,24 +1,26 @@
 """
-Step 3 — score every populated H3 res-9 cell across the 8 categories.
+Step 3 — score every populated H3 cell across the 8 categories,
+separately for walking and biking.
 
 Inputs:
-  - data/15min-slo/amenity_isochrones.jsonl    (from 02_isochrones.py)
-  - data/15min-slo/kontur_population_SI.gpkg   (populated res-8 cells)
+  - data/15min-slo/amenity_isochrones.jsonl    (from 02_isochrones.py — rows
+    carry a `mode` field "pedestrian" or "bicycle")
+  - data/15min-slo/kontur_population_SI.gpkg
 
 Outputs:
-  - data/15min-slo/cell_scores.json            (full table: h3 + score + walk_min[8] + population)
-  - data/15min-slo/cell_scores_lite.json.gz    (frontend layer: h3 + score)
-  - data/15min-slo/cell_scores_summary.json    (counts by score bucket, for sanity-check)
+  - data/15min-slo/cell_scores.json            (h3, walk_score, bike_score,
+                                                 walk_min[8], bike_min[8],
+                                                 population)
+  - data/15min-slo/cell_scores_lite.json[.gz]  (frontend layer: h3, w, b)
+  - data/15min-slo/cell_scores_summary.json
+  - data/15min-slo/obcine_scored.geojson       (per-občina walk/bike mean)
 
 Algorithm:
-  1. Load Kontur (res 8) → expand each cell to its 7 res-9 children → 22k × 7 ≈ 154k cells.
-  2. Compute centroid (point) per child cell.
-  3. Load isochrones JSONL → GeoDataFrame, indexed by (category, contour_min).
-  4. For each (category, contour_min) in {5, 10, 15}:
-       sjoin cell centroids against that subset of isochrones
-       if a cell is inside, set walk_min[category] = min(current, contour_min)
-  5. score = sum(walk_min[cat] <= 15 for cat in CATEGORIES)
-  6. Bike time is derived in the frontend as walk_min / 2.5 (PLAN §3 lock).
+  1. Load Kontur (res 8) → expand each cell to its 7 res-10 children (~154k).
+  2. Compute centroid per cell.
+  3. Load isochrones JSONL → split by mode.
+  4. For each mode, for each (category, contour) sjoin cells → record min reachable contour.
+  5. score = sum(reachable in 15 min for cat in CATEGORIES) — separately for walk/bike.
 """
 
 from __future__ import annotations
@@ -33,7 +35,7 @@ import geopandas as gpd
 import h3
 import numpy as np
 import pandas as pd
-from shapely.geometry import Point, shape
+from shapely.geometry import shape
 
 ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = ROOT / "data" / "15min-slo"
@@ -55,6 +57,7 @@ CATEGORIES = [
     "promet", "sport", "storitve", "delo",
 ]
 CONTOURS_DESC = [15, 10, 5]  # iterate widest → narrowest; smaller value wins
+MODES = ["pedestrian", "bicycle"]
 
 
 def load_populated_cells() -> gpd.GeoDataFrame:
@@ -62,7 +65,6 @@ def load_populated_cells() -> gpd.GeoDataFrame:
     kontur = gpd.read_file(KONTUR_GPKG)
     print(f"  {len(kontur):,} res-8 cells")
 
-    # Population per parent → distribute uniformly across the 7 res-9 children
     rows = []
     for h3_parent, pop in zip(kontur["h3"], kontur["population"]):
         children = h3.cell_to_children(h3_parent, H3_RES)
@@ -92,19 +94,28 @@ def load_isochrones() -> gpd.GeoDataFrame:
             except json.JSONDecodeError:
                 continue
             rec["geometry"] = shape(rec["geometry"])
+            # Backwards-compat: rows from the original walking-only bake
+            # don't carry a `mode` field — treat them as pedestrian.
+            rec.setdefault("mode", "pedestrian")
             records.append(rec)
 
     gdf = gpd.GeoDataFrame(records, crs="EPSG:4326")
     print(f"  {len(gdf):,} polygons across {gdf['category'].nunique()} categories")
-    print(gdf.groupby(["category", "contour_min"]).size().unstack(fill_value=0))
+    print("  by mode:")
+    print(gdf.groupby(["mode", "contour_min"]).size().unstack(fill_value=0))
     return gdf
 
 
-def score(cells: gpd.GeoDataFrame, isos: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
-    walk_min = np.full((len(cells), len(CATEGORIES)), 999, dtype=np.int16)
+def score_one_mode(cells: gpd.GeoDataFrame, isos: gpd.GeoDataFrame, mode: str) -> np.ndarray:
+    """Return an (n_cells, n_categories) int16 array of min reachable contour, 999 = unreachable."""
+    out = np.full((len(cells), len(CATEGORIES)), 999, dtype=np.int16)
+    subset = isos[isos["mode"] == mode]
+    if subset.empty:
+        print(f"  ⚠ no {mode} isochrones found, all cells marked unreachable")
+        return out
 
     for cat_idx, category in enumerate(CATEGORIES):
-        cat_subset = isos[isos["category"] == category]
+        cat_subset = subset[subset["category"] == category]
         if cat_subset.empty:
             continue
         for contour in CONTOURS_DESC:  # 15 → 10 → 5
@@ -114,23 +125,37 @@ def score(cells: gpd.GeoDataFrame, isos: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
             joined = gpd.sjoin(cells[["h3", "geometry"]], polys[["geometry"]], predicate="within")
             hit_h3 = set(joined["h3"])
             mask = cells["h3"].isin(hit_h3).values
-            # The smaller contour overrides the larger because we iterate widest → narrowest
-            walk_min[mask, cat_idx] = contour
-            print(f"    {category:<14} ≤{contour:>2} min  hits {mask.sum():>7,}")
+            out[mask, cat_idx] = contour
+            print(f"    [{mode:<10}] {category:<14} ≤{contour:>2} min  hits {mask.sum():>7,}")
+    return out
 
-    score_int = (walk_min <= 15).sum(axis=1).astype(np.int8)
+
+def score(cells: gpd.GeoDataFrame, isos: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+    print("\nScoring walking …")
+    walk = score_one_mode(cells, isos, "pedestrian")
+    print("\nScoring biking …")
+    bike = score_one_mode(cells, isos, "bicycle")
+
+    walk_score = (walk <= 15).sum(axis=1).astype(np.int8)
+    bike_score = (bike <= 15).sum(axis=1).astype(np.int8)
+
     cells = cells.copy()
-    cells["score"] = score_int
+    cells["walk_score"] = walk_score
+    cells["bike_score"] = bike_score
     for i, cat in enumerate(CATEGORIES):
-        cells[f"walk_{cat}"] = walk_min[:, i]
+        cells[f"walk_{cat}"] = walk[:, i]
+        cells[f"bike_{cat}"] = bike[:, i]
     return cells
 
 
 def export(cells: gpd.GeoDataFrame) -> None:
     print("\nWriting outputs …")
 
-    # Lite (frontend hex layer) — uncompressed for dev, gzipped sidecar for prod deploy
-    lite = [{"h3": h, "score": int(s)} for h, s in zip(cells["h3"], cells["score"])]
+    # Lite — frontend hex layer. Renamed shape: {h3, w, b}
+    lite = [
+        {"h3": h, "w": int(w), "b": int(b)}
+        for h, w, b in zip(cells["h3"], cells["walk_score"], cells["bike_score"])
+    ]
     lite_blob = json.dumps(lite, separators=(",", ":"))
     OUTPUT_LITE.write_text(lite_blob)
     FRONTEND_LITE.parent.mkdir(parents=True, exist_ok=True)
@@ -138,29 +163,35 @@ def export(cells: gpd.GeoDataFrame) -> None:
     with gzip.open(OUTPUT_LITE_GZ, "wt", compresslevel=9) as f:
         f.write(lite_blob)
 
-    # Full
+    # Full — full per-cell row used by REST scorecard fetch.
     full = []
     walk_cols = [f"walk_{c}" for c in CATEGORIES]
-    for row in cells[["h3", "score", "population", *walk_cols]].itertuples(index=False):
+    bike_cols = [f"bike_{c}" for c in CATEGORIES]
+    sel = cells[["h3", "walk_score", "bike_score", "population", *walk_cols, *bike_cols]]
+    for row in sel.itertuples(index=False):
+        h3v = row[0]
+        walk_score = int(row[1])
+        bike_score = int(row[2])
+        pop = float(row[3])
+        walk_vals = row[4:4 + 8]
+        bike_vals = row[4 + 8:4 + 16]
         full.append({
-            "h3": row.h3,
-            "score": int(row.score),
-            "population": round(float(row.population), 2),
-            "walk_min": [None if int(v) > 15 else int(v) for v in row[3:]],
+            "h3": h3v,
+            "walk_score": walk_score,
+            "bike_score": bike_score,
+            "population": round(pop, 2),
+            "walk_min": [None if int(v) > 15 else int(v) for v in walk_vals],
+            "bike_min": [None if int(v) > 15 else int(v) for v in bike_vals],
         })
     OUTPUT_FULL.write_text(json.dumps(full, separators=(",", ":")))
 
     summary = {
         "cells_total": len(cells),
-        "by_score": pd.Series(cells["score"]).value_counts().sort_index().to_dict(),
-        "color_buckets": {
-            "green_6_8": int(((cells["score"] >= 6) & (cells["score"] <= 8)).sum()),
-            "yellow_4_5": int(((cells["score"] >= 4) & (cells["score"] <= 5)).sum()),
-            "orange_2_3": int(((cells["score"] >= 2) & (cells["score"] <= 3)).sum()),
-            "red_0_1": int(((cells["score"] >= 0) & (cells["score"] <= 1)).sum()),
-        },
+        "by_walk_score": pd.Series(cells["walk_score"]).value_counts().sort_index().to_dict(),
+        "by_bike_score": pd.Series(cells["bike_score"]).value_counts().sort_index().to_dict(),
     }
-    summary["by_score"] = {int(k): int(v) for k, v in summary["by_score"].items()}
+    summary["by_walk_score"] = {int(k): int(v) for k, v in summary["by_walk_score"].items()}
+    summary["by_bike_score"] = {int(k): int(v) for k, v in summary["by_bike_score"].items()}
     SUMMARY.write_text(json.dumps(summary, indent=2))
 
     print(f"  ✓ {OUTPUT_LITE.relative_to(ROOT)}     ({OUTPUT_LITE.stat().st_size/1024:,.0f} KB)")
@@ -169,39 +200,43 @@ def export(cells: gpd.GeoDataFrame) -> None:
     print(f"  ✓ {OUTPUT_FULL.relative_to(ROOT)}     ({OUTPUT_FULL.stat().st_size/1024/1024:,.1f} MB)")
     print(f"  ✓ {SUMMARY.relative_to(ROOT)}")
     print()
-    print("Score distribution:")
-    for k, v in summary["by_score"].items():
-        bar = "█" * int(60 * v / max(summary["by_score"].values()))
+    print("Walk score distribution:")
+    for k, v in summary["by_walk_score"].items():
+        bar = "█" * int(60 * v / max(summary["by_walk_score"].values()))
+        print(f"  {k}: {v:>7,}  {bar}")
+    print("Bike score distribution:")
+    for k, v in summary["by_bike_score"].items():
+        bar = "█" * int(60 * v / max(summary["by_bike_score"].values()))
         print(f"  {k}: {v:>7,}  {bar}")
 
 
 def aggregate_obcine(cells: gpd.GeoDataFrame) -> None:
-    """Population-weighted mean score per občina → obcine_scored.geojson."""
+    """Population-weighted walk + bike mean per občina."""
     if not OBCINE_INPUT.exists():
         print(f"\n  Skipping občina aggregation: {OBCINE_INPUT.name} not found.")
         return
 
-    print(f"\nAggregating to občine …")
+    print("\nAggregating to občine …")
     obcine = gpd.read_file(OBCINE_INPUT)
     print(f"  {len(obcine):,} polygons loaded")
 
-    # Spatial join: cell centroid → containing občina (uses STRtree under the hood).
-    work = cells[["score", "population", "geometry"]].copy()
-    work["score_pop"] = work["score"].astype(float) * work["population"]
+    work = cells[["walk_score", "bike_score", "population", "geometry"]].copy()
+    work["walk_pop"] = work["walk_score"].astype(float) * work["population"]
+    work["bike_pop"] = work["bike_score"].astype(float) * work["population"]
     joined = gpd.sjoin(work, obcine[["geometry"]], predicate="within", how="inner")
 
-    agg = (
-        joined.groupby("index_right")
-        .agg(
-            score_pop_sum=("score_pop", "sum"),
-            population_sum=("population", "sum"),
-            n_cells=("score", "size"),
-        )
+    agg = joined.groupby("index_right").agg(
+        walk_sum=("walk_pop", "sum"),
+        bike_sum=("bike_pop", "sum"),
+        population_sum=("population", "sum"),
+        n_cells=("walk_score", "size"),
     )
-    agg["mean_score"] = (agg["score_pop_sum"] / agg["population_sum"]).fillna(0)
+    agg["walk_mean"] = (agg["walk_sum"] / agg["population_sum"]).fillna(0)
+    agg["bike_mean"] = (agg["bike_sum"] / agg["population_sum"]).fillna(0)
 
     obcine_out = obcine.copy()
-    obcine_out["mean_score"] = agg["mean_score"].reindex(obcine_out.index).fillna(0).round(3)
+    obcine_out["walk_mean"] = agg["walk_mean"].reindex(obcine_out.index).fillna(0).round(3)
+    obcine_out["bike_mean"] = agg["bike_mean"].reindex(obcine_out.index).fillna(0).round(3)
     obcine_out["population"] = agg["population_sum"].reindex(obcine_out.index).fillna(0).round(0).astype(int)
     obcine_out["n_cells"] = agg["n_cells"].reindex(obcine_out.index).fillna(0).astype(int)
 
@@ -213,21 +248,20 @@ def aggregate_obcine(cells: gpd.GeoDataFrame) -> None:
         FRONTEND_OBCINE.unlink()
     obcine_out.to_file(FRONTEND_OBCINE, driver="GeoJSON")
 
-    print(f"  ✓ {OBCINE_SCORED.relative_to(ROOT)}     ({OBCINE_SCORED.stat().st_size/1024/1024:,.1f} MB)")
+    print(f"  ✓ {OBCINE_SCORED.relative_to(ROOT)}  ({OBCINE_SCORED.stat().st_size/1024/1024:,.1f} MB)")
     print(f"  ✓ {FRONTEND_OBCINE.relative_to(ROOT)}")
 
-    show = obcine_out[["OB_UIME", "mean_score", "population", "n_cells"]]
-    print("\n  Top 5 občine by population-weighted mean score:")
-    print("   ", show.nlargest(5, "mean_score").to_string(index=False).replace("\n", "\n    "))
-    print("\n  Bottom 5:")
-    print("   ", show.nsmallest(5, "mean_score").to_string(index=False).replace("\n", "\n    "))
+    show = obcine_out[["OB_UIME", "walk_mean", "bike_mean", "population", "n_cells"]]
+    print("\n  Top 5 občine by walk_mean:")
+    print("   ", show.nlargest(5, "walk_mean").to_string(index=False).replace("\n", "\n    "))
+    print("\n  Top 5 občine by bike_mean:")
+    print("   ", show.nlargest(5, "bike_mean").to_string(index=False).replace("\n", "\n    "))
 
 
 def main() -> None:
     t0 = time.time()
     cells = load_populated_cells()
     isos = load_isochrones()
-    print("\nScoring …")
     scored = score(cells, isos)
     export(scored)
     aggregate_obcine(scored)
