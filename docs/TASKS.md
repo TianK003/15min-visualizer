@@ -31,11 +31,11 @@ Legend: ✅ done · 🟡 partial · ⏳ todo · DEC decision pending
 | D | D4 | Accessibility | 🟡 ARIA wired |
 | D | D5 | Empty/loading/error | 🟡 |
 | D | D6 | Izvor podatkov + Swagger | ✅ |
-| D | D7 | Custom basemap | ⏳ |
+| D | D7 | Custom basemap | 🟡 positron + runtime POI/parking filter |
 | D | D8 | Dark mode toggle | ✅ |
-| E | E1 | Investor mode | ⏳ |
-| E | E2 | Občina planner | ⏳ |
-| E | E3 | Mode switcher | ⏳ |
+| E | E1 | Investor mode | ✅ |
+| E | E2 | Občina planner | cut |
+| E | E3 | Mode switcher | ✅ in-page view pill |
 | F | F1 | Partial-load tiles | 🟡 ETL done |
 | F | F2 | Web Worker | ⏳ |
 | F | F3 | Binary attrs | ⏳ |
@@ -364,7 +364,7 @@ Format: `tag=value` — number after each value is the rough count in OSM Sloven
      - ARSO Zavarovana območja · 531 polygons · WFS · CC-BY 4.0
      - ARSO Natura 2000 · 355 polygons · WFS · CC-BY 4.0
      - Kontur Population SI · 22,034 res-8 → 1,079,666 res-10 children
-     - OpenFreeMap `liberty` basemap · open vector tiles, no API key
+     - OpenFreeMap `positron` (light) / `dark-matter` (dark) basemap · open vector tiles, no API key
   3. **Methodology summary** — also in plain SL:
      - H3 res-10 (~66 m edge) — why this resolution, not res-9 or res-11
      - 8 categories with OSM tag list per category (link to GitHub `01_extract_amenities.py`)
@@ -412,7 +412,8 @@ Format: `tag=value` — number after each value is the rough count in OSM Sloven
 - **Status:** A theme toggle (sun/moon icon) sits next to the "Od kod podatki?" pill in the lower-left cluster. State persists to `localStorage` under the key `theme`; first load defaults to the user's `prefers-color-scheme`. The toggle flips `data-theme` on `<html>` (driving every CSS token override) **and** swaps the MapLibre style at runtime (`positron` ↔ `dark-matter`) without remounting the map. The same control is mirrored inside the "Izvor podatkov" panel under a "Videz" section so users who discover the panel first can still toggle.
 - **AC met:** flicker-free switch (no reload), basemap and panels both flip, preference persists across sessions.
 
-#### D7 · Programmable / custom basemap style · **P2** · ⏳ **TODO**
+#### D7 · Programmable / custom basemap style · **P2** · 🟡 **PARTIAL — runtime patch in place**
+- **Status:** Light theme uses hosted Positron + a runtime `harmonizeBasemap()` hook in `Map.tsx` that runs on every `styledata` event and (a) removes any `fill-extrusion` layer (kills 3D buildings — there are none in Positron but defensive against future style swaps) and (b) appends a `class != parking` filter to every `poi_r*` symbol layer (kills the "P" parking icons). MapLibre's default attribution chip is disabled via `attributionControl: false`. A full fork-and-edit of the style JSON is still open if we want to push minzoom thresholds on street labels.
 - **Why:** OpenFreeMap's hosted styles (`positron`, `liberty`, `bright`) are good defaults, but the basemap is currently fighting the heatmap and score palettes for visual attention. A bespoke style — muted background, reduced label density, no 3D extrusions, no POI icons — would let the deck.gl overlays read cleanly *and* drop a few ms per frame on weaker hardware.
 - **Dependencies:** D1 (palette locked) so we know which neutrals harmonize with the chosen accent colors.
 - **Approach (recommended: fork-and-edit):**
@@ -436,34 +437,23 @@ Format: `tag=value` — number after each value is the rough count in OSM Sloven
 
 ### Phase E — Modes (B + C)
 
-#### E1 · Mode B — Investor view · **P0** *(user's #9 "critical")* · ⏳ **TODO**
-- **Status:** Backend ready — `cell_scores.unbuildable` + per-category `walk_min[]` are all queryable. UI not built yet (no `/investitor` route, no demand layer, no projection card).
-- **Goal:** dedicated `/investitor` route. Inverted heatmap: `demand = population × (1 − category_satisfied)`. Click a hot cell → "Build a [category] here → N residents gain access."
-- **Steps:**
-  1. New page `frontend/app/investitor/page.tsx` — reuses `<Map />` with a different `mode='investor'` prop.
-  2. Category dropdown (top bar) — pick which of 8/9 categories to optimize for.
-  3. Compute `demand_per_cell` client-side from `cell_scores` (we already store per-category satisfaction; demand = pop × (1 − sat)).
-  4. Color cells by demand (purple-gradient palette, distinct from green-red).
-  5. Click handler: open projection card showing population gain + nearest 3 competitors (other amenities in same category within 1 km).
-  6. Občina filter dropdown (filter visible cells to one obcina).
-  7. Respect B4's `unbuildable=true` flag — gray those cells out.
-- **Dependencies:** A4, B3, B4.
-- **AC:** picking "lekarna" in Triglav region returns zero suggestions (all unbuildable); in Maribor suburbs returns specific hot cells.
+#### E1 · Mode B — Investor view · **P0** · ✅ **DONE**
+- **Status:** Shipped in-page (no separate `/investitor` route — the top-row "Potrošnik / Investitor" pill flips the active view). What's wired:
+  - Demand model: `demand = pop × (1 − served)` where `pop` is the cell's share of its res-9 Kontur parent and `served` comes from `cell_cat_scores.json` (per-res-9, 8 categories) when a category filter is active, or the cell's overall walk-score-derived satisfaction otherwise.
+  - **Vertical category-filter column** at top-left — full-width pills (icon + label per row), 8 categories + "Vse kategorije". Renders only when no cell is selected; the scoreboard takes over when one is clicked, so the two never collide.
+  - **Palette**: viridis-style 4-step — dark-purple `#440154` → teal-blue `#31688E` → green `#35B779` → bright-yellow `#FDE725`. Color-blind safe (distinct hue + luminance per step). Replaces the earlier cyan/indigo/violet wedge that failed contrast.
+  - **Zero-potential cells** (saturated category or zero remaining demand) bucket explicitly to dark-purple "zanemarljivo". The threshold calc filters zero values from the percentile so the median doesn't collapse to 0 for saturated categories.
+  - **Unpopulated layer**: pale parchment `H3HexagonLayer` synthesized client-side from the obcina polygons via `h3.polygonToCells(_, 9)` minus `pops` (then expanded to res-10 children). ~250k hexes covering forests, ridges, lakes. Painted beneath the data layer so Slovenia's footprint stays visually complete in both views.
+  - **Suggestion pins** — `building_suggestions.json` + `fro.geojson` overlay when a category is active. Tooltip explains the rationale (degradirano območje vs predlagana lokacija).
+  - **Hoja/Kolo toggle** is shared with the Potrošnik view.
+- **Not built / deferred to SLO4D:** projection card with named competitor amenities, obcina filter, B4 `unbuildable` gating in the demand layer (parchment unpopulated cells substitute for it visually).
 
-#### E2 · Mode C — Občina planner view · **P1** *(user's #14)* · ⏳ **TODO**
-- **Status:** Backend ready — `obcine_scored.geojson` ships `mean_score`, `population`, `n_cells` for every občina. UI not built.
-- **Goal:** `/obcina` route. Choropleth + sortable scoreboard.
-- **Steps:**
-  1. Sortable side table: columns = obcina name, mean_score, population, %-cells-with-score-≥-6 ("15-min-city share"), n_cells. Click row → map zooms to that obcina + side panel with quick facts.
-  2. Quick-facts panel: 4 stat tiles (population, % satisfying 15-min, top-served category, top-underserved category).
-  3. Top-5 / bottom-5 highlight (already in `aggregate_obcine` output; just surface in UI).
-- **Dependencies:** A2 (live data).
-- **AC:** sort by `15-min city share` reveals Ljubljana > Maribor > Koper > … as top; bottom is Kostel.
+#### E2 · Mode C — Občina planner view · **cut**
+- Not built. The low-zoom obcina-fill polygon layer already paints `mean_score` per obcina; that carries the planner intuition. A dedicated route + sortable side table was scoped out for the hackathon window.
+- If revived for SLO4D polish: `obcine_scored.geojson` already ships `mean_score`, `population`, `n_cells` for every obcina — surface in a side table sortable by `15-min city share`.
 
-#### E3 · Mode switcher · **P1** · ⏳ **TODO**
-- Tab control in header: "Doma" / "Investitor" / "Občina". Preserves map viewport across modes.
-- **Status:** URL hash already carries lng/lat/zoom (from G4), so cross-mode viewport sync is straightforward once E1/E2 land.
-- **AC:** switching tabs keeps the same lat/lng/zoom; only the data layer + side panel swap.
+#### E3 · Mode switcher · ✅ **DONE — top-row view pill**
+- Implemented as the **top-row "Potrošnik / Investitor" pill** living alongside the address bar. Preserves map viewport across views by virtue of being in-page (no route change). Hoja/Kolo lives in the bottom-right pill, same chrome.
 
 ---
 
@@ -563,7 +553,7 @@ These are not actionable until a decision is made.
 | H1 | Project name + brand (literal "15min Slovenija" vs emotional "Doma" vs scoring "ProstorScore") | deferred — decide later |
 | H2 | ~~9th category~~ | **resolved 2026-05-13: no 9th category, score stays 0–8** |
 | H3 | Hexagon resolution lock — keep res-10 as the bake target | **resolved: res-10 locked** |
-| H4 | Basemap final — `liberty` (current) or `positron` after D1 visual polish? | open |
+| H4 | Basemap final | **resolved: `positron` (light) / `dark-matter` (dark) with runtime parking-POI filter** |
 | H5 | LLM use cases (G3) | **resolved: natural-language search + cell narrative** |
 | H6 | English translation | **resolved: out of scope; UI Slovenian only** |
 | H7 | B2 hand-pick amenity tags | open — user will check boxes in the candidate list inline above |
