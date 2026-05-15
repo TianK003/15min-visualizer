@@ -8,6 +8,8 @@ import type { Layer } from "@deck.gl/core";
 import { GeoJsonLayer, TextLayer, ScatterplotLayer } from "@deck.gl/layers";
 import { HeatmapLayer } from "@deck.gl/aggregation-layers";
 import { H3HexagonLayer, TripsLayer } from "@deck.gl/geo-layers";
+import { H3GradientMeshLayer } from "@/lib/H3GradientMeshLayer";
+import { buildGradientMesh } from "@/lib/gradientMesh";
 import * as h3 from "h3-js";
 import Scorecard, { type RouteSet, type RoutePath } from "@/components/Scorecard";
 import AddressSearch, { type AddressSearchHandle } from "@/components/AddressSearch";
@@ -481,6 +483,11 @@ export default function SloveniaMap() {
     [cells, currentRes, showObcineFill],
   );
 
+  const gradientMesh = useMemo(
+    () => buildGradientMesh(aggregatedScores, mode),
+    [aggregatedScores, mode],
+  );
+
   const animatedPaths = useMemo(
     () => (routeSet && routeSet.paths.length > 0 ? buildAnimatedPaths(routeSet.paths) : null),
     [routeSet],
@@ -569,19 +576,23 @@ export default function SloveniaMap() {
           getLineColor: [80, 80, 80, 160],
           pickable: false,
         }),
+        new H3GradientMeshLayer({
+          id: "scores-gradient",
+          positions: gradientMesh.positions,
+          colors: gradientMesh.colors,
+          vertexCount: gradientMesh.vertexCount,
+          pickable: false,
+        }),
         new H3HexagonLayer<ScoreCell>({
-          id: "scores",
+          id: "scores-pick",
           data: aggregatedScores,
-          pickable: true, // click-only (no onHover) — perf hit acceptable
-          stroked: true,
+          pickable: true,
+          stroked: false,
           filled: true,
           extruded: false,
           getHexagon: (d) => d.h3,
-          getFillColor: (d) => colorForScore(mode === "bike" ? d.b : d.w),
-          getLineColor: [255, 255, 255, 70],
-          lineWidthUnits: "pixels",
-          getLineWidth: 0.5,
-          updateTriggers: { getFillColor: [aggregatedScores, mode] },
+          // Invisible — picking pass uses picking IDs, not fill alpha.
+          getFillColor: [0, 0, 0, 0],
           onClick: ({ object }) => {
             if (!object) return;
             // Convert aggregated h3 to a representative res-10 child for
@@ -785,7 +796,7 @@ export default function SloveniaMap() {
     }
 
     overlay.setProps({ layers });
-  }, [aggregatedScores, popPoints, showObcineFill, currentRes, view, isoFeature, routeSet, amenityDots, hoveredAmenity, mode, selectedH3, originLngLat, animatedPaths, animTime]);
+  }, [aggregatedScores, gradientMesh, popPoints, showObcineFill, currentRes, view, isoFeature, routeSet, amenityDots, hoveredAmenity, mode, selectedH3, originLngLat, animatedPaths, animTime]);
 
   const flyToCoord = (lng: number, lat: number, targetZoom = 14, fromAddress = false) => {
     const map = mapRef.current;
