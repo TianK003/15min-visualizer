@@ -1,26 +1,35 @@
-// Valhalla client — used by the "Show 15-min reach" overlay (TASKS C4)
-// and the path-to-amenity route renderer (TASKS C3).
+// Valhalla client. Locked speeds:
+//   walking : 4 km/h   (NEXT_PUBLIC_WALKING_SPEED override)
+//   biking  : 13 km/h  (NEXT_PUBLIC_CYCLING_SPEED override)
+// Bicycle uses bicycle_type=Hybrid for general-purpose urban routing.
 //
-// The base URL comes from NEXT_PUBLIC_VALHALLA_URL, set in .env.local. For
-// local dev the existing Docker container at backend/valhalla/Dockerfile
-// is reached at http://127.0.0.1:8002. For production a Railway URL goes
-// here (TASKS A3, deferred).
-
 // Browser goes through our Next.js proxy (/api/valhalla/*) to avoid CORS
 // preflight against the Valhalla container, which doesn't handle OPTIONS.
-// Override via NEXT_PUBLIC_VALHALLA_URL only if the upstream supports CORS.
+
 const VALHALLA_URL = process.env.NEXT_PUBLIC_VALHALLA_URL ?? "/api/valhalla";
+
+const WALKING_SPEED = Number(process.env.NEXT_PUBLIC_WALKING_SPEED ?? 4);
+const CYCLING_SPEED = Number(process.env.NEXT_PUBLIC_CYCLING_SPEED ?? 13);
+
+type Costing = "pedestrian" | "bicycle";
+
+function costingOptions(costing: Costing) {
+  if (costing === "pedestrian") {
+    return { pedestrian: { walking_speed: WALKING_SPEED } };
+  }
+  return { bicycle: { bicycle_type: "Hybrid", cycling_speed: CYCLING_SPEED } };
+}
 
 export type IsochroneOptions = {
   lat: number;
   lng: number;
-  walkMin?: number;        // default 15
-  costing?: "pedestrian" | "bicycle";
+  minutes?: number;       // default 15
+  costing?: Costing;
 };
 
-/** Returns a GeoJSON Feature with a Polygon — ready to drop into deck.gl's PolygonLayer. */
+/** Returns a GeoJSON Feature with a Polygon — ready for deck.gl. */
 export async function isochrone({
-  lat, lng, walkMin = 15, costing = "pedestrian",
+  lat, lng, minutes = 15, costing = "pedestrian",
 }: IsochroneOptions): Promise<GeoJSON.Feature> {
   const res = await fetch(`${VALHALLA_URL}/isochrone`, {
     method: "POST",
@@ -28,7 +37,8 @@ export async function isochrone({
     body: JSON.stringify({
       locations: [{ lat, lon: lng }],
       costing,
-      contours: [{ time: walkMin }],
+      costing_options: costingOptions(costing),
+      contours: [{ time: minutes }],
       polygons: true,
     }),
   });
@@ -40,10 +50,9 @@ export async function isochrone({
 export type RouteOptions = {
   from: { lat: number; lng: number };
   to: { lat: number; lng: number };
-  costing?: "pedestrian" | "bicycle";
+  costing?: Costing;
 };
 
-/** Returns the route's encoded polyline + summary. The path is decoded by the caller. */
 export async function route({ from, to, costing = "pedestrian" }: RouteOptions) {
   const res = await fetch(`${VALHALLA_URL}/route`, {
     method: "POST",
@@ -54,6 +63,7 @@ export async function route({ from, to, costing = "pedestrian" }: RouteOptions) 
         { lat: to.lat, lon: to.lng },
       ],
       costing,
+      costing_options: costingOptions(costing),
       directions_options: { units: "kilometers" },
     }),
   });
