@@ -1,0 +1,518 @@
+<!DOCTYPE html>
+<html lang="sl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Slovenija — Občine Data Visualizer</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'Inter', system-ui, sans-serif;
+    background: #0f1117;
+    color: #e2e8f0;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ── Header ──────────────────────────────────── */
+  .header {
+    background: linear-gradient(135deg, #1a1d2e 0%, #0f1117 100%);
+    border-bottom: 1px solid rgba(99, 102, 241, 0.2);
+    padding: 12px 24px;
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    flex-wrap: wrap;
+    z-index: 1000;
+  }
+  .header h1 {
+    font-size: 18px;
+    font-weight: 700;
+    background: linear-gradient(135deg, #818cf8, #6366f1, #a78bfa);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    white-space: nowrap;
+  }
+  .header .subtitle {
+    font-size: 12px;
+    color: #64748b;
+    font-weight: 400;
+  }
+
+  /* ── Controls ────────────────────────────────── */
+  .controls {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    flex-wrap: wrap;
+    flex: 1;
+  }
+  .control-group {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .control-group label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #94a3b8;
+    font-weight: 500;
+  }
+  select {
+    background: #1e2133;
+    border: 1px solid rgba(99, 102, 241, 0.3);
+    color: #e2e8f0;
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-family: inherit;
+    font-size: 13px;
+    cursor: pointer;
+    min-width: 220px;
+    transition: border-color 0.2s;
+  }
+  select:hover { border-color: rgba(99, 102, 241, 0.6); }
+  select:focus { outline: none; border-color: #6366f1; box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.15); }
+
+  .stats-bar {
+    display: flex;
+    gap: 16px;
+    margin-left: auto;
+    font-size: 12px;
+  }
+  .stat { text-align: center; }
+  .stat-value {
+    font-weight: 600;
+    font-size: 14px;
+    color: #a78bfa;
+  }
+  .stat-label {
+    font-size: 10px;
+    color: #64748b;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  /* ── Map ─────────────────────────────────────── */
+  #map {
+    flex: 1;
+    background: #0f1117;
+  }
+
+  /* ── Legend ───────────────────────────────────── */
+  .legend {
+    background: rgba(15, 17, 23, 0.92);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(99, 102, 241, 0.2);
+    border-radius: 10px;
+    padding: 12px 16px;
+    font-size: 11px;
+    min-width: 160px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+  }
+  .legend h4 {
+    font-size: 11px;
+    font-weight: 600;
+    margin-bottom: 8px;
+    color: #a78bfa;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .legend-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 3px 0;
+  }
+  .legend-swatch {
+    width: 20px;
+    height: 12px;
+    border-radius: 2px;
+    flex-shrink: 0;
+  }
+  .legend-label {
+    color: #94a3b8;
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ── Info panel (tooltip on hover) ───────────── */
+  .info-panel {
+    background: rgba(15, 17, 23, 0.92);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(99, 102, 241, 0.2);
+    border-radius: 10px;
+    padding: 14px 18px;
+    font-size: 12px;
+    min-width: 240px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+    transition: opacity 0.15s;
+  }
+  .info-panel h3 {
+    font-size: 15px;
+    font-weight: 600;
+    margin-bottom: 6px;
+    color: #e2e8f0;
+  }
+  .info-panel .info-value {
+    font-size: 22px;
+    font-weight: 700;
+    color: #818cf8;
+    margin-bottom: 4px;
+  }
+  .info-panel .info-details {
+    color: #64748b;
+    font-size: 11px;
+    line-height: 1.5;
+  }
+  .info-panel .info-details span {
+    color: #94a3b8;
+    font-weight: 500;
+  }
+
+  /* ── Loading ─────────────────────────────────── */
+  .loading {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(15, 17, 23, 0.9);
+    z-index: 2000;
+    transition: opacity 0.5s;
+  }
+  .loading.hidden { opacity: 0; pointer-events: none; }
+  .spinner {
+    width: 40px;
+    height: 40px;
+    border: 3px solid rgba(99, 102, 241, 0.2);
+    border-top-color: #6366f1;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Override Leaflet for dark theme */
+  .leaflet-container { background: #0f1117 !important; }
+  .leaflet-control-zoom a {
+    background: #1e2133 !important;
+    color: #e2e8f0 !important;
+    border-color: rgba(99,102,241,0.2) !important;
+  }
+  .leaflet-control-zoom a:hover { background: #2a2d42 !important; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div>
+    <h1>🇸🇮 Občine Visualizer</h1>
+    <div class="subtitle">212 občin · SURS SiStat 2025</div>
+  </div>
+  <div class="controls">
+    <div class="control-group">
+      <label>Dataset</label>
+      <select id="datasetSelect">
+        <option value="indicators">📊 Main Indicators (58)</option>
+        <option value="salaries">💰 Salary Details (10)</option>
+      </select>
+    </div>
+    <div class="control-group">
+      <label>Indicator</label>
+      <select id="indicatorSelect"></select>
+    </div>
+  </div>
+  <div class="stats-bar">
+    <div class="stat"><div class="stat-value" id="statMin">—</div><div class="stat-label">Min</div></div>
+    <div class="stat"><div class="stat-value" id="statAvg">—</div><div class="stat-label">Avg</div></div>
+    <div class="stat"><div class="stat-value" id="statMax">—</div><div class="stat-label">Max</div></div>
+  </div>
+</div>
+
+<div id="map"></div>
+<div class="loading" id="loading"><div class="spinner"></div></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+// ── Color palettes ──────────────────────────────────────────────
+const PALETTES = {
+  viridis: ['#440154','#482878','#3e4989','#31688e','#26828e','#1f9e89','#35b779','#6ece58','#b5de2b','#fde725'],
+  magma:   ['#000004','#180f3d','#440f76','#721f81','#9e2f7f','#cd4071','#f1605d','#fd9668','#feca8d','#fcfdbf'],
+  plasma:  ['#0d0887','#4903a0','#7d03a8','#a82296','#cb4679','#e56b5d','#f89441','#fdc328','#f0f921','#f0f921'],
+};
+
+// ── Utility ─────────────────────────────────────────────────────
+function parseCSV(text) {
+  const lines = text.split('\n').filter(l => l.trim());
+  if (!lines.length) return [];
+  // Handle quoted headers/values properly
+  const parseRow = (line) => {
+    const result = [];
+    let current = '', inQuotes = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (ch === '"') { inQuotes = !inQuotes; continue; }
+      if (ch === ',' && !inQuotes) { result.push(current.trim()); current = ''; continue; }
+      if (ch === '\r') continue;
+      current += ch;
+    }
+    result.push(current.trim());
+    return result;
+  };
+  const headers = parseRow(lines[0]);
+  return lines.slice(1).map(line => {
+    const vals = parseRow(line);
+    const obj = {};
+    headers.forEach((h, i) => obj[h] = vals[i] || '');
+    return obj;
+  });
+}
+
+function fmt(v) {
+  if (v === null || v === undefined) return '—';
+  const n = parseFloat(v);
+  if (isNaN(n)) return v;
+  if (Math.abs(n) >= 1e6) return (n/1e6).toFixed(1) + 'M';
+  if (Math.abs(n) >= 1e4) return (n/1e3).toFixed(1) + 'K';
+  if (Number.isInteger(n)) return n.toLocaleString('sl-SI');
+  return n.toLocaleString('sl-SI', { maximumFractionDigits: 1 });
+}
+
+function getColor(value, min, max, palette) {
+  if (value === null || isNaN(value)) return '#1e2133';
+  const t = max === min ? 0.5 : (value - min) / (max - min);
+  const idx = Math.min(Math.floor(t * palette.length), palette.length - 1);
+  return palette[idx];
+}
+
+// ── App state ───────────────────────────────────────────────────
+let geojsonData = null;
+let geojsonLayer = null;
+let datasets = {};
+let currentDataset = 'indicators';
+let currentIndicator = '';
+let palette = PALETTES.viridis;
+let map;
+
+// ── Init map ────────────────────────────────────────────────────
+map = L.map('map', {
+  zoomControl: true,
+  attributionControl: false,
+}).setView([46.15, 14.99], 8.4);
+
+// Dark tile layer
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png', {
+  maxZoom: 18,
+}).addTo(map);
+// Labels on top
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png', {
+  maxZoom: 18, pane: 'overlayPane',
+}).addTo(map);
+
+// ── Info panel (top-right) ──────────────────────────────────────
+const infoControl = L.control({ position: 'topright' });
+infoControl.onAdd = function() {
+  this._div = L.DomUtil.create('div', 'info-panel');
+  this.update();
+  return this._div;
+};
+infoControl.update = function(props, value, indicator) {
+  if (!props) {
+    this._div.innerHTML = '<h3>Hover over an občina</h3><div class="info-details">or click to zoom</div>';
+    return;
+  }
+  const displayVal = value !== null && !isNaN(value) ? fmt(value) : 'N/A';
+  this._div.innerHTML = `
+    <h3>${props.OB_UIME}</h3>
+    <div class="info-value">${displayVal}</div>
+    <div class="info-details">
+      <span>${indicator || ''}</span><br>
+      Površina: ${props.POV_KM2} km²<br>
+      ID: ${props.OB_ID}
+    </div>`;
+};
+infoControl.addTo(map);
+
+// ── Legend (bottom-right) ───────────────────────────────────────
+const legendControl = L.control({ position: 'bottomright' });
+legendControl.onAdd = function() {
+  this._div = L.DomUtil.create('div', 'legend');
+  return this._div;
+};
+legendControl.update = function(min, max) {
+  let html = '<h4>Legenda</h4>';
+  const steps = palette.length;
+  for (let i = steps - 1; i >= 0; i--) {
+    const lo = min + (max - min) * (i / steps);
+    const hi = min + (max - min) * ((i + 1) / steps);
+    html += `<div class="legend-row">
+      <div class="legend-swatch" style="background:${palette[i]}"></div>
+      <span class="legend-label">${fmt(lo)} – ${fmt(hi)}</span>
+    </div>`;
+  }
+  this._div.innerHTML = html;
+};
+legendControl.addTo(map);
+
+// ── Data loading ────────────────────────────────────────────────
+async function loadAll() {
+  const [geoRes, indRes, salRes] = await Promise.all([
+    fetch('15min-slo/obcine.geojson').then(r => r.json()),
+    fetch('obcine_indicators.csv').then(r => r.text()),
+    fetch('obcine_salaries.csv').then(r => r.text()),
+  ]);
+
+  geojsonData = geoRes;
+
+  // Parse CSVs and index by občina code (padded to match)
+  const indRows = parseCSV(indRes);
+  const salRows = parseCSV(salRes);
+
+  // Index by numeric ID (strip leading zeros)
+  const indexByCode = (rows) => {
+    const map = {};
+    rows.forEach(r => { map[parseInt(r['Občina'])] = r; });
+    return map;
+  };
+
+  datasets.indicators = {
+    data: indexByCode(indRows),
+    columns: Object.keys(indRows[0] || {}).filter(k => k !== 'Občina' && k !== 'Leto'),
+  };
+  datasets.salaries = {
+    data: indexByCode(salRows),
+    columns: Object.keys(salRows[0] || {}).filter(k => k !== 'Občina' && k !== 'Leto'),
+  };
+
+  populateIndicatorSelect();
+  renderMap();
+  document.getElementById('loading').classList.add('hidden');
+}
+
+// ── Populate indicator dropdown ─────────────────────────────────
+function populateIndicatorSelect() {
+  const sel = document.getElementById('indicatorSelect');
+  sel.innerHTML = '';
+  const ds = datasets[currentDataset];
+  ds.columns.forEach(col => {
+    const opt = document.createElement('option');
+    opt.value = col;
+    opt.textContent = col;
+    sel.appendChild(opt);
+  });
+  // Pick a good default
+  const defaults = {
+    indicators: 'Število prebivalcev - 1. januar',
+    salaries: 'Povprečna mesečna bruto plača (EUR)',
+  };
+  const def = defaults[currentDataset];
+  if (def && ds.columns.includes(def)) {
+    sel.value = def;
+  }
+  currentIndicator = sel.value;
+}
+
+// ── Render choropleth ───────────────────────────────────────────
+function renderMap() {
+  const ds = datasets[currentDataset];
+  if (!ds || !currentIndicator) return;
+
+  // Collect numeric values
+  const values = [];
+  geojsonData.features.forEach(f => {
+    const id = f.properties.OB_ID;
+    const row = ds.data[id];
+    if (row) {
+      const raw = row[currentIndicator];
+      const v = parseFloat(raw);
+      if (!isNaN(v) && raw !== '-' && raw !== '...' && raw !== 'z') {
+        values.push(v);
+      }
+    }
+  });
+
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const avg = values.reduce((a,b) => a+b, 0) / values.length;
+
+  // Update stats
+  document.getElementById('statMin').textContent = fmt(min);
+  document.getElementById('statAvg').textContent = fmt(avg);
+  document.getElementById('statMax').textContent = fmt(max);
+
+  // Update legend
+  legendControl.update(min, max);
+
+  // Remove old layer
+  if (geojsonLayer) map.removeLayer(geojsonLayer);
+
+  geojsonLayer = L.geoJSON(geojsonData, {
+    style: (feature) => {
+      const id = feature.properties.OB_ID;
+      const row = ds.data[id];
+      let value = null;
+      if (row) {
+        const raw = row[currentIndicator];
+        const v = parseFloat(raw);
+        if (!isNaN(v) && raw !== '-' && raw !== '...' && raw !== 'z') value = v;
+      }
+      return {
+        fillColor: getColor(value, min, max, palette),
+        weight: 1,
+        opacity: 0.8,
+        color: 'rgba(99, 102, 241, 0.3)',
+        fillOpacity: 0.85,
+      };
+    },
+    onEachFeature: (feature, layer) => {
+      const id = feature.properties.OB_ID;
+      const row = ds.data[id];
+      let value = null;
+      if (row) {
+        const raw = row[currentIndicator];
+        const v = parseFloat(raw);
+        if (!isNaN(v) && raw !== '-' && raw !== '...' && raw !== 'z') value = v;
+      }
+
+      layer.on({
+        mouseover: (e) => {
+          e.target.setStyle({
+            weight: 2.5,
+            color: '#a78bfa',
+            fillOpacity: 0.95,
+          });
+          e.target.bringToFront();
+          infoControl.update(feature.properties, value, currentIndicator);
+        },
+        mouseout: (e) => {
+          geojsonLayer.resetStyle(e.target);
+          infoControl.update();
+        },
+        click: (e) => {
+          map.fitBounds(e.target.getBounds(), { padding: [40, 40] });
+        },
+      });
+    }
+  }).addTo(map);
+}
+
+// ── Event listeners ─────────────────────────────────────────────
+document.getElementById('datasetSelect').addEventListener('change', (e) => {
+  currentDataset = e.target.value;
+  populateIndicatorSelect();
+  renderMap();
+});
+
+document.getElementById('indicatorSelect').addEventListener('change', (e) => {
+  currentIndicator = e.target.value;
+  renderMap();
+});
+
+// ── Go! ─────────────────────────────────────────────────────────
+loadAll();
+</script>
+</body>
+</html>
