@@ -282,6 +282,7 @@ export default function SloveniaMap() {
   const [routeSet, setRouteSet] = useState<RouteSet | null>(null);
   const [amenityDots, setAmenityDots] = useState<AmenityForPoint[] | null>(null);
   const [hoveredAmenity, setHoveredAmenity] = useState<AmenityForPoint | null>(null);
+  const [hoveredCell, setHoveredCell] = useState<string | null>(null);
   const [provenanceOpen, setProvenanceOpen] = useState(false);
   const [mode, setMode] = useState<Mode>("walk");
   // When set, the Scorecard routes from this exact point instead of the cell
@@ -611,6 +612,23 @@ export default function SloveniaMap() {
             setOriginFromAddress(false);
             setSelectedH3(target);
           },
+          onHover: ({ object }) => setHoveredCell(object?.h3 ?? null),
+        }),
+        new ScatterplotLayer<{ h3: string }>({
+          id: "hover-dot",
+          data: hoveredCell ? [{ h3: hoveredCell }] : [],
+          getPosition: (d) => {
+            const [lat, lng] = h3.cellToLatLng(d.h3);
+            return [lng, lat];
+          },
+          getRadius: 5,
+          radiusUnits: "pixels",
+          radiusMinPixels: 4,
+          getFillColor: [255, 255, 255, 220],
+          stroked: true,
+          getLineColor: [17, 24, 39, 220],
+          lineWidthMinPixels: 1.5,
+          pickable: false,
         }),
       );
 
@@ -801,7 +819,7 @@ export default function SloveniaMap() {
     }
 
     overlay.setProps({ layers });
-  }, [aggregatedScores, gradientMesh, popPoints, showObcineFill, currentRes, view, isoFeature, routeSet, amenityDots, hoveredAmenity, mode, selectedH3, originLngLat, animatedPaths, animTime]);
+  }, [aggregatedScores, gradientMesh, popPoints, showObcineFill, currentRes, view, isoFeature, routeSet, amenityDots, hoveredAmenity, hoveredCell, mode, selectedH3, originLngLat, animatedPaths, animTime]);
 
   const flyToCoord = (lng: number, lat: number, targetZoom = 14, fromAddress = false) => {
     const map = mapRef.current;
