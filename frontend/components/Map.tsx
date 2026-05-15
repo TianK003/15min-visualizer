@@ -6,7 +6,6 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import { MapboxOverlay } from "@deck.gl/mapbox";
 import type { Layer } from "@deck.gl/core";
 import { GeoJsonLayer, TextLayer, ScatterplotLayer } from "@deck.gl/layers";
-import { HeatmapLayer } from "@deck.gl/aggregation-layers";
 import { H3HexagonLayer, TripsLayer } from "@deck.gl/geo-layers";
 import * as h3 from "h3-js";
 import Scorecard, { type RouteSet, type RoutePath } from "@/components/Scorecard";
@@ -17,7 +16,6 @@ import ThemeToggle from "@/components/ThemeToggle";
 import { categoryById, CATEGORIES } from "@/lib/categories";
 import type { AmenityForPoint } from "@/lib/supabase";
 import { useTheme } from "@/lib/theme";
-import { pointInFeature } from "@/lib/geo";
 import { ZONE_REASONS, type Suggestion } from "@/lib/suggestions";
 
 type GroupedPin = {
@@ -34,11 +32,12 @@ const PATH_ALPHA = 153;
 const FALLBACK_RGB: [number, number, number] = [120, 120, 120];
 const DOT_HALO: [number, number, number, number] = [255, 255, 255, 230];
 
-// Liberty is the OSM-Mapnik-flavoured OpenFreeMap style: full street network
-// with names from medium zoom, city / town / country labels, POIs. It ships
-// with a `building-3d` fill-extrusion layer and a parking POI symbol — we
-// strip 3D (map is locked flat) and parking ("P" icons) on style.load.
-const BASEMAP_LIGHT = "https://tiles.openfreemap.org/styles/liberty";
+// Positron is OpenFreeMap's clean grayscale style — desaturated, no green
+// parks / yellow roads. Lets the data colors (score buckets, demand heat)
+// own the canvas. Parking-class POIs are still filtered defensively in
+// harmonizeBasemap on the chance Positron exposes them; the loop is a
+// no-op if the layers don't exist.
+const BASEMAP_LIGHT = "https://tiles.openfreemap.org/styles/positron";
 const BASEMAP_DARK = "https://tiles.openfreemap.org/styles/dark-matter";
 
 // Liberty buckets POIs into rank tiers (poi_r1, poi_r7, poi_r20) — they're
@@ -123,13 +122,12 @@ const LJUBLJANA_BBOX = {
 };
 const H3_BASE_RES = 10;
 
-type View = "15min" | "population" | "investor";
+type View = "15min" | "investor";
 export type Mode = "walk" | "bike";
 
 /** Score JSON shape: {h3, w, b} — walk & bike scores baked together. */
 type ScoreCell = { h3: string; w: number; b: number };
 type PopCell = { h3: string; pop: number };
-type PopPoint = { position: [number, number]; pop: number };
 type DemandCell = { h3: string; walkDemand: number; bikeDemand: number };
 type DemandThresholds = { p50: number; p75: number; p90: number };
 
@@ -176,11 +174,20 @@ function aggregateDemand(cells: DemandCell[], targetRes: number): DemandCell[] {
 
 type Rgba = [number, number, number, number];
 
+// Pale parchment for cells that exist inside Slovenia but have zero Kontur
+// population — forests, ridges, lakes. Distinct from data colors (no green /
+// red / purple) and not gray (gray is reserved for the upcoming protected-
+// zone overlay). Alpha 150 keeps the basemap legible underneath.
+const UNPOP_COLOR: Rgba = [212, 207, 188, 150];
+
+// Viridis-style 4-step sequential — distinct hue AND luminance per step so it
+// reads for color-blind users and at a glance. Alpha 170 (~67 %) gives strong
+// data presence without fully hiding the Positron basemap underneath.
 function colorForDemand(demand: number, t: DemandThresholds): Rgba {
-  if (demand >= t.p90) return [6, 182, 212, 128];   // cyan — visok potencial
-  if (demand >= t.p75) return [59, 130, 246, 128];  // modra — srednji
-  if (demand >= t.p50) return [99, 102, 241, 128];  // indigo-modra — nizek
-  return [139, 92, 246, 128];                        // vijolična — zanemarljiv
+  if (demand >= t.p90) return [253, 231, 37, 170];   // bright yellow — visok
+  if (demand >= t.p75) return [53, 183, 121, 170];   // green — srednji
+  if (demand >= t.p50) return [49, 104, 142, 170];   // teal-blue — nizek
+  return [68, 1, 84, 170];                            // dark purple — zanemarljiv
 }
 
 function colorForScore(score: number): Rgba {
@@ -189,15 +196,6 @@ function colorForScore(score: number): Rgba {
   if (score >= 2) return [249, 115, 22, 128];
   return [239, 68, 68, 128];
 }
-
-const HEATMAP_COLOR_RANGE: Array<[number, number, number]> = [
-  [20, 14, 54],
-  [70, 16, 110],
-  [136, 35, 130],
-  [196, 70, 105],
-  [240, 130, 80],
-  [252, 253, 191],
-];
 
 type AnimatedPath = { waypoints: [number, number][]; timestamps: number[]; duration: number };
 
@@ -211,11 +209,10 @@ function approxMeters(a: [number, number], b: [number, number]): number {
   return Math.sqrt(dLat * dLat + dLng * dLng);
 }
 
-// 2.5 ms per meter caps a 1.2 km walking path at exactly 3 s, the user's
-// stated ceiling. Closer amenities animate faster — the spread effect is
-// visibly distance-driven.
+// 2.5 ms per meter, capped at 2 s — the user's stated ceiling. Closer
+// amenities animate faster; anything past ~800 m hits the cap.
 const MS_PER_METER = 2.5;
-const MAX_ANIM_MS = 3000;
+const MAX_ANIM_MS = 2000;
 
 function buildAnimatedPaths(paths: RoutePath[]): { paths: AnimatedPath[]; maxDuration: number } {
   const out: AnimatedPath[] = [];
@@ -305,6 +302,10 @@ export default function SloveniaMap() {
   const [cellsError, setCellsError] = useState<string | null>(null);
   const [pops, setPops] = useState<PopCell[]>([]);
   const [popsLoading, setPopsLoading] = useState(false);
+  // Cached obcine GeoJSON — used client-side to synthesize the H3 cells over
+  // unpopulated parts of Slovenia. Browser HTTP cache deduplicates with the
+  // deck.gl GeoJsonLayer fetch.
+  const [obcineFC, setObcineFC] = useState<GeoJSON.FeatureCollection | null>(null);
   const [zoom, setZoom] = useState<number>(INITIAL_ZOOM);
   const [usingDummy, setUsingDummy] = useState<boolean>(false);
   const [selectedH3, setSelectedH3] = useState<string | null>(null);
@@ -322,12 +323,6 @@ export default function SloveniaMap() {
   const addressSearchRef = useRef<AddressSearchHandle | null>(null);
   const [theme] = useTheme();
   const [legendOpen, setLegendOpen] = useState(false);
-  // Cached obcine polygons for the top-left "Občina pod kazalcem" indicator.
-  // Same URL the deck.gl GeoJsonLayer already fetches; fetched a second time
-  // here so we can run cheap point-in-polygon against the map center on
-  // every moveend. 212 polygons × brute force ≈ sub-millisecond.
-  const [obcineFC, setObcineFC] = useState<GeoJSON.FeatureCollection | null>(null);
-  const [obcinaUnderCursor, setObcinaUnderCursor] = useState<string | null>(null);
   // Path-spread animation. currentTime advances via requestAnimationFrame
   // from 0 → maxDuration each time a new routeSet lands. TripsLayer fades
   // segments older than `currentTime - trailLength`; with trailLength = 1e9
@@ -375,28 +370,21 @@ export default function SloveniaMap() {
     };
   }, []);
 
-  // One-shot fetch of obcine polygons for the top-left indicator. Failure
-  // is non-fatal — the indicator falls back to "Slovenija".
+  // One-shot fetch of obcine polygons for client-side unpopulated-cell
+  // synthesis. Browser HTTP cache serves the same URL deck.gl is already
+  // requesting, so this is effectively free network-wise.
   useEffect(() => {
     let cancelled = false;
-    (async () => {
-      try {
-        const res = await fetch(OBCINE_URL);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const fc = (await res.json()) as GeoJSON.FeatureCollection;
-        if (!cancelled) setObcineFC(fc);
-      } catch {
-        // Silent — top-left chip will just stay at "Slovenija".
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
+    fetch(OBCINE_URL)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((fc) => { if (!cancelled && fc) setObcineFC(fc as GeoJSON.FeatureCollection); })
+      .catch(() => { /* unpop layer just stays empty — non-fatal */ });
+    return () => { cancelled = true; };
   }, []);
 
   // Lazy-load population on first switch. Deps deliberately omit popsLoading.
   useEffect(() => {
-    if ((view !== "population" && view !== "investor") || pops.length > 0) return;
+    if (view !== "investor" || pops.length > 0) return;
     let cancelled = false;
     setPopsLoading(true);
     (async () => {
@@ -455,6 +443,9 @@ export default function SloveniaMap() {
       pitchWithRotate: false,
       touchPitch: false,
       dragRotate: false,
+      // No bottom-right attribution chip — sources are credited in the
+      // IzvorPodatkov modal opened from the bottom-left "Od kod podatki?" link.
+      attributionControl: false,
     });
     mapRef.current = map;
 
@@ -506,25 +497,6 @@ export default function SloveniaMap() {
     map.setStyle(target);
   }, [theme]);
 
-  // Re-identify the obcina under the map center on every moveend. Runs once
-  // when the FC finishes loading and after every pan/zoom. Brute force is
-  // fine for 212 polygons.
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map || !obcineFC) return;
-    const recompute = () => {
-      const c = map.getCenter();
-      const hit = obcineFC.features.find((f) => pointInFeature(c.lng, c.lat, f));
-      const name = (hit?.properties as { OB_UIME?: string } | undefined)?.OB_UIME ?? null;
-      setObcinaUnderCursor(name);
-    };
-    recompute();
-    map.on("moveend", recompute);
-    return () => {
-      map.off("moveend", recompute);
-    };
-  }, [obcineFC]);
-
   const showObcineFill = zoom < SHOW_OBCINE_FILL_BELOW;
   const currentRes = zoomToResolution(zoom);
 
@@ -532,6 +504,52 @@ export default function SloveniaMap() {
     () => (showObcineFill ? [] : aggregateMean(cells, currentRes)),
     [cells, currentRes, showObcineFill],
   );
+
+  // Synthesize the H3 cells covering Slovenia's unpopulated geography
+  // (forests / ridges / lakes — areas the Kontur population grid skips).
+  // Strategy: run polygonToCells at res 9 over each obcina polygon, take the
+  // set difference against `pops` (which is exhaustive at res 9 for inhabited
+  // cells), then expand the leftover to res-10 children. Runs once when
+  // obcineFC + pops + cells are all loaded. ~250 k res-10 strings; sub-second.
+  const unpopCells = useMemo<string[]>(() => {
+    if (!obcineFC || cells.length === 0 || pops.length === 0) return [];
+    const populatedRes10 = new Set(cells.map((c) => c.h3));
+    const populatedRes9 = new Set(pops.map((p) => p.h3));
+    const sloveniaRes9 = new Set<string>();
+    for (const f of obcineFC.features) {
+      const geom = f.geometry;
+      const polys: number[][][][] =
+        geom.type === "Polygon" ? [geom.coordinates] :
+        geom.type === "MultiPolygon" ? geom.coordinates :
+        [];
+      for (const poly of polys) {
+        // GeoJSON uses [lng, lat]; h3-js polygonToCells in this project's
+        // generateDummyCells passes [lat, lng] pairs — match that.
+        const outer = poly[0].map(([lng, lat]) => [lat, lng] as [number, number]);
+        for (const c of h3.polygonToCells(outer, 9)) sloveniaRes9.add(c);
+      }
+    }
+    const out: string[] = [];
+    for (const p9 of sloveniaRes9) {
+      if (populatedRes9.has(p9)) continue;
+      for (const c of h3.cellToChildren(p9, H3_BASE_RES)) {
+        // Defensive — a cell ending up in both would render twice.
+        if (!populatedRes10.has(c)) out.push(c);
+      }
+    }
+    return out;
+  }, [obcineFC, cells, pops]);
+
+  // Aggregate unpopulated cells to currentRes so they match the on-screen hex
+  // size of the score / investor data they sit underneath. At res-10 itself
+  // it's a no-op; below, we dedupe by parent so each rendered hex appears once.
+  const aggregatedUnpop = useMemo<string[]>(() => {
+    if (showObcineFill) return [];
+    if (currentRes >= H3_BASE_RES) return unpopCells;
+    const parents = new Set<string>();
+    for (const c of unpopCells) parents.add(h3.cellToParent(c, currentRes));
+    return Array.from(parents);
+  }, [unpopCells, currentRes, showObcineFill]);
 
   const animatedPaths = useMemo(
     () => (routeSet && routeSet.paths.length > 0 ? buildAnimatedPaths(routeSet.paths) : null),
@@ -572,16 +590,6 @@ export default function SloveniaMap() {
     return Array.from(map.values());
   }, [suggestionPins]);
 
-  const popPoints = useMemo<PopPoint[]>(() => {
-    if (pops.length === 0) return [];
-    const out: PopPoint[] = new Array(pops.length);
-    for (let i = 0; i < pops.length; i++) {
-      const [lat, lng] = h3.cellToLatLng(pops[i].h3);
-      out[i] = { position: [lng, lat], pop: pops[i].pop };
-    }
-    return out;
-  }, [pops]);
-
   const investorCells = useMemo<DemandCell[]>(() => {
     if (pops.length === 0 || cells.length === 0) return [];
     // Population is at res-9; distribute evenly across res-10 children.
@@ -592,20 +600,25 @@ export default function SloveniaMap() {
       childCount.set(p9, (childCount.get(p9) ?? 0) + 1);
     }
     const out: DemandCell[] = [];
+    // Every cell in `cells` is emitted exactly once. Cases that previously
+    // dropped a cell (zero population, missing catScores row, category
+    // already fully present) now emit `demand = 0`, which `colorForDemand`
+    // maps to the "zanemarljivo" bucket. This keeps Slovenia's populated
+    // footprint visually filled even where there's no investment upside.
     for (const c of cells) {
       const p9 = h3.cellToParent(c.h3, 9);
       const parentPop = popMap.get(p9) ?? 0;
-      if (parentPop === 0) continue;
-      const pop = parentPop / (childCount.get(p9) ?? 1);
+      const pop = parentPop > 0 ? parentPop / (childCount.get(p9) ?? 1) : 0;
 
+      let demand = 0;
       if (investorCat !== null && catScores.size > 0) {
-        // catScores is at res-9 — look up parent
         const catArr = catScores.get(p9);
-        if (!catArr) continue;
-        const present = catArr[investorCat];
-        if (present >= 1) continue;
-        const d = pop * (1 - present);
-        out.push({ h3: c.h3, walkDemand: d, bikeDemand: d });
+        if (catArr) {
+          const present = catArr[investorCat];
+          // present >= 1 → fully served → no remaining demand → 0 by design.
+          demand = present >= 1 ? 0 : pop * (1 - present);
+        }
+        out.push({ h3: c.h3, walkDemand: demand, bikeDemand: demand });
       } else {
         out.push({
           h3: c.h3,
@@ -624,10 +637,16 @@ export default function SloveniaMap() {
 
   const demandThresholds = useMemo<DemandThresholds>(() => {
     if (aggregatedInvestorCells.length === 0) return { p50: 1, p75: 2, p90: 4 };
+    // Filter zero-demand cells out of the percentile calc — they're the
+    // "zanemarljivo" sink (fully-served zones, etc.) and would otherwise
+    // collapse p50 to zero whenever a saturated category is selected,
+    // causing every cell to register as `demand >= p50` and paint teal.
     const vals = aggregatedInvestorCells
       .map((c) => (mode === "walk" ? c.walkDemand : c.bikeDemand))
+      .filter((v) => v > 0)
       .sort((a, b) => a - b);
     const n = vals.length;
+    if (n === 0) return { p50: 1, p75: 2, p90: 4 };
     return {
       p50: vals[Math.floor(n * 0.50)],
       p75: vals[Math.floor(n * 0.75)],
@@ -671,23 +690,25 @@ export default function SloveniaMap() {
 
     const layers: Layer[] = [];
 
-    if (view === "population") {
+    // Unpopulated cells — painted first so they sit beneath all data layers.
+    // Only relevant at hex zoom; below `SHOW_OBCINE_FILL_BELOW` the obcina
+    // fill already covers Slovenia uniformly.
+    if (!showObcineFill && aggregatedUnpop.length > 0) {
       layers.push(
-        new HeatmapLayer<PopPoint>({
-          id: "population-heat",
-          data: popPoints,
-          getPosition: (d) => d.position,
-          getWeight: (d) => d.pop,
-          aggregation: "SUM",
-          radiusPixels: 40,
-          intensity: 1,
-          threshold: 0.03,
-          opacity: 0.5,
-          colorRange: HEATMAP_COLOR_RANGE,
+        new H3HexagonLayer<string>({
+          id: "unpop-hex",
+          data: aggregatedUnpop,
           pickable: false,
+          stroked: false,
+          filled: true,
+          extruded: false,
+          getHexagon: (d) => d,
+          getFillColor: UNPOP_COLOR,
         }),
       );
-    } else if (view === "investor") {
+    }
+
+    if (view === "investor") {
       if (showObcineFill) {
         layers.push(
           new GeoJsonLayer<ObcinaProps>({
@@ -874,9 +895,11 @@ export default function SloveniaMap() {
           // Huge trail so segments never fade after being revealed — once
           // the head reaches the amenity, the entire trail stays painted.
           trailLength: 1e9,
-          getWidth: 4,
+          // Thicker stroke + larger minPixels smooths the look at any zoom;
+          // jointRounded/capRounded already do the round-off on joins & ends.
+          getWidth: 6,
           widthUnits: "pixels",
-          widthMinPixels: 3,
+          widthMinPixels: 5,
           jointRounded: true,
           capRounded: true,
           pickable: false,
@@ -1025,7 +1048,7 @@ export default function SloveniaMap() {
     }
 
     overlay.setProps({ layers, getTooltip: suggestionTooltip });
-  }, [aggregatedScores, popPoints, aggregatedInvestorCells, demandThresholds, catScores, investorCat, groupedPins, cellsMap, showObcineFill, currentRes, view, isoFeature, routeSet, amenityDots, hoveredAmenity, mode, selectedH3, originLngLat, animatedPaths, animTime]);
+  }, [aggregatedScores, aggregatedInvestorCells, aggregatedUnpop, demandThresholds, catScores, investorCat, groupedPins, cellsMap, showObcineFill, currentRes, view, isoFeature, routeSet, amenityDots, hoveredAmenity, mode, selectedH3, originLngLat, animatedPaths, animTime]);
 
   const suggestionTooltip = ({ object, layer }: { object?: unknown; layer?: { id: string } | null }) => {
     if (layer?.id !== "suggestions" || !object) return null;
@@ -1075,14 +1098,29 @@ export default function SloveniaMap() {
       <ChatBox onSelectH3={setSelectedH3} flyToCoord={flyToCoord} />
       <div id="map-root" ref={containerRef} />
 
-      <AddressSearch
-        ref={addressSearchRef}
-        onPick={(lng, lat) => flyToCoord(lng, lat, 14, true)}
-      />
-
-      <div className="obcina-indicator" role="status" aria-live="polite">
-        <span className="obcina-pin" aria-hidden>📍</span>
-        Občina: <b>{obcinaUnderCursor ?? "Slovenija"}</b>
+      <div className="top-row">
+        <AddressSearch
+          ref={addressSearchRef}
+          onPick={(lng, lat) => flyToCoord(lng, lat, 14, true)}
+        />
+        <div className="view-switch" role="group" aria-label="Pogled">
+          <button
+            type="button"
+            className={view === "15min" ? "active" : ""}
+            onClick={() => setView("15min")}
+            aria-pressed={view === "15min"}
+          >
+            Potrošnik
+          </button>
+          <button
+            type="button"
+            className={view === "investor" ? "active" : ""}
+            onClick={() => setView("investor")}
+            aria-pressed={view === "investor"}
+          >
+            Investitor
+          </button>
+        </div>
       </div>
 
       {view === "15min" ? (
@@ -1129,7 +1167,7 @@ export default function SloveniaMap() {
             </div>
           )}
         </div>
-      ) : view === "investor" ? (
+      ) : (
         <div className={`legend ${legendOpen ? "is-open" : "is-collapsed"}`}>
           <button
             type="button"
@@ -1155,86 +1193,53 @@ export default function SloveniaMap() {
           {legendOpen && (
             <div id="legend-body" className="legend-body">
               <div className="legend-row">
-                <span className="legend-swatch" style={{ background: "rgb(6,182,212)" }} />
+                <span className="legend-swatch" style={{ background: "rgb(253,231,37)" }} />
                 Visok
               </div>
               <div className="legend-row">
-                <span className="legend-swatch" style={{ background: "rgb(59,130,246)" }} />
+                <span className="legend-swatch" style={{ background: "rgb(53,183,121)" }} />
                 Srednji
               </div>
               <div className="legend-row">
-                <span className="legend-swatch" style={{ background: "rgb(99,102,241)" }} />
+                <span className="legend-swatch" style={{ background: "rgb(49,104,142)" }} />
                 Nizek
               </div>
               <div className="legend-row">
-                <span className="legend-swatch" style={{ background: "rgb(139,92,246)" }} />
+                <span className="legend-swatch" style={{ background: "rgb(68,1,84)" }} />
                 Zanemarljiv
               </div>
-              {popsLoading && <div className="legend-pop-scale">nalagam …</div>}
-            </div>
-          )}
-        </div>
-      ) : (
-        <div className={`legend legend-pop ${legendOpen ? "is-open" : "is-collapsed"}`}>
-          <button
-            type="button"
-            className="legend-toggle"
-            onClick={() => setLegendOpen((o) => !o)}
-            aria-expanded={legendOpen}
-            aria-controls="legend-body"
-          >
-            <span>Legenda gostote</span>
-            <svg
-              className="legend-chevron"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden
-            >
-              <polyline points="6 9 12 15 18 9" />
-            </svg>
-          </button>
-          {legendOpen && (
-            <div id="legend-body" className="legend-body">
-              <div className="legend-gradient" />
-              <div className="legend-gradient-labels">
-                <span>redko</span>
-                <span>pogosto</span>
-              </div>
-              {popsLoading && <div className="legend-pop-scale">nalagam …</div>}
+              {popsLoading && <div className="legend-loading">nalagam …</div>}
             </div>
           )}
         </div>
       )}
 
-      {view === "investor" && (
+      {view === "investor" && !selectedH3 && (
         <div className="investor-cat-filter" role="group" aria-label="Filter kategorije">
           <button
             type="button"
-            className={investorCat === null ? "active" : ""}
+            className={`investor-cat-pill ${investorCat === null ? "active" : ""}`}
             onClick={() => setInvestorCat(null)}
           >
-            Vse
+            <span className="investor-cat-ico" aria-hidden>✱</span>
+            <span className="investor-cat-label">Vse kategorije</span>
           </button>
           {CATEGORIES.map((cat, i) => (
             <button
               key={cat.id}
               type="button"
-              className={investorCat === i ? "active" : ""}
+              className={`investor-cat-pill ${investorCat === i ? "active" : ""}`}
               onClick={() => setInvestorCat(investorCat === i ? null : i)}
-              title={cat.label}
             >
-              {cat.icon}
+              <span className="investor-cat-ico" aria-hidden>{cat.icon}</span>
+              <span className="investor-cat-label">{cat.label}</span>
             </button>
           ))}
         </div>
       )}
 
       {(view === "15min" || view === "investor") && (
-        <div className="mode-toggle mode-toggle-global" role="group" aria-label="Način">
+        <div className="mode-toggle-global" role="group" aria-label="Način">
           <button
             type="button"
             className={mode === "walk" ? "active" : ""}
@@ -1253,33 +1258,6 @@ export default function SloveniaMap() {
           </button>
         </div>
       )}
-
-      <div className="view-switch" role="group" aria-label="Pogled">
-        <button
-          type="button"
-          className={view === "15min" ? "active" : ""}
-          onClick={() => setView("15min")}
-          aria-pressed={view === "15min"}
-        >
-          15-min
-        </button>
-        <button
-          type="button"
-          className={view === "population" ? "active" : ""}
-          onClick={() => setView("population")}
-          aria-pressed={view === "population"}
-        >
-          Poseljenost
-        </button>
-        <button
-          type="button"
-          className={view === "investor" ? "active" : ""}
-          onClick={() => setView("investor")}
-          aria-pressed={view === "investor"}
-        >
-          Investitor
-        </button>
-      </div>
 
       <Scorecard
         h3id={selectedH3}
@@ -1304,16 +1282,10 @@ export default function SloveniaMap() {
         <ThemeToggle />
         <button
           type="button"
-          className="provenance-link"
+          className="provenance-text-link"
           onClick={() => setProvenanceOpen(true)}
-          aria-label="Od kod podatki?"
-          title="Od kod podatki?"
         >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-            <circle cx="12" cy="12" r="10" />
-            <line x1="12" y1="16" x2="12" y2="12" />
-            <line x1="12" y1="8" x2="12.01" y2="8" />
-          </svg>
+          Od kod podatki?
         </button>
       </div>
       {provenanceOpen && <IzvorPodatkov onClose={() => setProvenanceOpen(false)} />}

@@ -120,39 +120,6 @@ button { font-family: inherit; }
 }
 
 /* ────────────────────────────────────────────────────────────────────────
-   Top-left "obcina under cursor" indicator
-   ──────────────────────────────────────────────────────────────────────── */
-.obcina-indicator {
-  position: absolute;
-  top: 16px;
-  left: 16px;
-  z-index: 10;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 14px;
-  border-radius: var(--radius-pill);
-  background: var(--surface-glass);
-  backdrop-filter: var(--blur);
-  -webkit-backdrop-filter: var(--blur);
-  border: 1px solid var(--border-glass);
-  box-shadow: var(--shadow-md);
-  font-size: 12px;
-  color: var(--text-secondary);
-  pointer-events: none;
-  max-width: calc(50vw - 240px);
-  white-space: nowrap;
-}
-.obcina-indicator b {
-  color: var(--text-primary);
-  font-weight: 600;
-}
-.obcina-indicator .obcina-pin {
-  font-size: 13px;
-  line-height: 1;
-}
-
-/* ────────────────────────────────────────────────────────────────────────
    Top-right legend
    ──────────────────────────────────────────────────────────────────────── */
 .legend {
@@ -224,29 +191,7 @@ button { font-family: inherit; }
   border-radius: 3px;
   flex-shrink: 0;
 }
-.legend-pop { min-width: 168px; }
-.legend-pop.is-collapsed { min-width: 0; }
-.legend-gradient {
-  height: 8px;
-  border-radius: var(--radius-pill);
-  margin: 8px 0 4px;
-  background: linear-gradient(
-    to right,
-    rgb(40, 20, 70),
-    rgb(81, 18, 124),
-    rgb(183, 55, 121),
-    rgb(252, 137, 97),
-    rgb(252, 253, 191)
-  );
-}
-.legend-gradient-labels {
-  display: flex;
-  justify-content: space-between;
-  font-size: 10px;
-  color: var(--text-tertiary);
-  letter-spacing: 0.02em;
-}
-.legend-pop-scale {
+.legend-loading {
   font-family: var(--font-mono);
   font-size: 11px;
   color: var(--text-secondary);
@@ -254,16 +199,21 @@ button { font-family: inherit; }
 }
 
 /* ────────────────────────────────────────────────────────────────────────
-   Address search (top center)
+   Top row — AddressSearch + view-switch grouped at top center
    ──────────────────────────────────────────────────────────────────────── */
-.address-search {
+.top-row {
   position: absolute;
   top: 16px;
   left: 50%;
   transform: translateX(-50%);
   z-index: 30;
-  width: min(440px, calc(100vw - 320px));
-  min-width: 280px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.address-search {
+  width: min(440px, calc(100vw - 420px));
+  min-width: 240px;
 }
 .address-search input {
   width: 100%;
@@ -320,22 +270,18 @@ button { font-family: inherit; }
 .address-status.error { color: var(--danger); }
 
 /* ────────────────────────────────────────────────────────────────────────
-   Bottom-center: view switch + mode toggle (stacked)
+   View-switch (top row) and Hoja/Kolo (bottom-right) — both solid pills,
+   no glass, matching chrome.
    ──────────────────────────────────────────────────────────────────────── */
 .view-switch {
-  position: absolute;
-  right: 16px;
-  bottom: 16px;
   display: inline-flex;
-  background: var(--surface-glass-strong);
-  backdrop-filter: var(--blur);
-  -webkit-backdrop-filter: var(--blur);
+  background: var(--surface);
   border: 1px solid var(--border-glass);
   border-radius: var(--radius-pill);
   padding: 4px;
   box-shadow: var(--shadow-md);
-  z-index: 10;
   font-size: 13px;
+  flex-shrink: 0;
 }
 .view-switch button {
   appearance: none;
@@ -359,27 +305,45 @@ button { font-family: inherit; }
   outline-offset: 1px;
 }
 
+/* Hoja/Kolo lives in the bottom-right where the view-switch used to sit.
+   Same chrome as .view-switch so they read as one visual family. */
 .mode-toggle-global {
   position: absolute;
   right: 16px;
-  bottom: 70px;
-  background: var(--surface-glass-strong);
-  backdrop-filter: var(--blur);
-  -webkit-backdrop-filter: var(--blur);
+  bottom: 16px;
+  display: inline-flex;
+  background: var(--surface);
   border: 1px solid var(--border-glass);
   border-radius: var(--radius-pill);
   padding: 4px;
   box-shadow: var(--shadow-md);
   z-index: 10;
   font-size: 13px;
-  margin: 0;
-  display: inline-flex;
 }
 .mode-toggle-global button {
-  padding: 6px 14px;
-  font-size: 13px;
+  appearance: none;
+  border: none;
+  background: transparent;
+  padding: 7px 16px;
+  border-radius: var(--radius-pill);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 500;
+  transition: background 140ms ease, color 140ms ease;
+}
+.mode-toggle-global button:hover { color: var(--text-primary); }
+.mode-toggle-global button.active {
+  background: var(--text-primary);
+  color: var(--bg);
+}
+.mode-toggle-global button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 
+/* Legacy in-scorecard mode toggle — kept as the smaller, in-card variant
+   so existing usage inside the scorecard isn't broken. */
 .mode-toggle {
   display: inline-flex;
   background: var(--border-faint);
@@ -387,8 +351,7 @@ button { font-family: inherit; }
   padding: 3px;
   margin: 4px 0 10px;
 }
-.mode-toggle button,
-.mode-toggle-global button {
+.mode-toggle button {
   appearance: none;
   border: 0;
   background: transparent;
@@ -401,8 +364,7 @@ button { font-family: inherit; }
   cursor: pointer;
   transition: background 140ms ease, color 140ms ease;
 }
-.mode-toggle button.active,
-.mode-toggle-global button.active {
+.mode-toggle button.active {
   background: var(--text-primary);
   color: var(--bg);
 }
@@ -445,31 +407,26 @@ button { font-family: inherit; }
   outline-offset: 1px;
 }
 
-.provenance-link {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 34px;
-  height: 34px;
-  background: var(--surface-glass);
-  backdrop-filter: var(--blur);
-  -webkit-backdrop-filter: var(--blur);
+.provenance-text-link {
+  appearance: none;
   border: 1px solid var(--border-glass);
+  background: var(--surface);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  padding: 6px 12px;
   border-radius: var(--radius-pill);
   cursor: pointer;
-  color: var(--text-secondary);
-  box-shadow: var(--shadow-md);
-  padding: 0;
-  transition: color 140ms ease, transform 140ms ease;
+  box-shadow: var(--shadow-sm);
+  transition: color 140ms ease, background 140ms ease;
 }
-.provenance-link:hover {
-  color: var(--accent);
-  transform: translateY(-1px);
+.provenance-text-link:hover {
+  color: var(--text-primary);
+  background: var(--surface);
 }
-.provenance-link svg { width: 16px; height: 16px; }
-.provenance-link:focus-visible {
+.provenance-text-link:focus-visible {
   outline: 2px solid var(--accent);
-  outline-offset: 1px;
+  outline-offset: 2px;
 }
 
 /* ────────────────────────────────────────────────────────────────────────
@@ -477,11 +434,11 @@ button { font-family: inherit; }
    ──────────────────────────────────────────────────────────────────────── */
 .scorecard {
   position: absolute;
-  top: 72px;
+  top: 16px;
   left: 16px;
   z-index: 20;
-  width: 320px;
-  max-height: calc(100vh - 160px);
+  width: 340px;
+  max-height: calc(100vh - 100px);
   overflow-y: auto;
   padding: 18px 20px 20px;
   border-radius: var(--radius-lg);
@@ -732,41 +689,67 @@ button { font-family: inherit; }
   box-shadow: var(--shadow-lg);
 }
 
-/* ---- Investor category filter (investor view) ---- */
+/* ────────────────────────────────────────────────────────────────────────
+   Investor category filter — vertical pill column at top-left.
+   Sits in the same slot as the scoreboard; the JSX only renders this when
+   no cell is selected, so the two never overlap.
+   ──────────────────────────────────────────────────────────────────────── */
 .investor-cat-filter {
   position: absolute;
-  right: 16px;
-  bottom: 110px;
+  top: 16px;
+  left: 16px;
+  z-index: 20;
+  width: 200px;
   display: flex;
-  gap: 3px;
-  background: rgba(255, 255, 255, 0.92);
-  border-radius: 12px;
-  padding: 5px;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.12);
-  z-index: 10;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
 }
-.investor-cat-filter button {
+.investor-cat-pill {
   appearance: none;
   border: none;
   background: transparent;
-  font-size: 16px;
-  width: 32px;
-  height: 32px;
-  border-radius: 7px;
-  cursor: pointer;
   display: flex;
   align-items: center;
-  justify-content: center;
-  transition: background 100ms ease;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 10px;
+  border-radius: var(--radius-pill);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  cursor: pointer;
+  text-align: left;
+  transition: background 120ms ease, color 120ms ease;
 }
-.investor-cat-filter button:hover { background: rgba(0, 0, 0, 0.06); }
-.investor-cat-filter button.active { background: #111; color: #fff; }
-.investor-cat-filter button:first-child {
-  font-size: 11px;
-  font-weight: 700;
-  width: auto;
-  padding: 0 8px;
-  letter-spacing: 0.02em;
+.investor-cat-pill:hover {
+  background: var(--border-faint);
+  color: var(--text-primary);
+}
+.investor-cat-pill.active {
+  background: var(--text-primary);
+  color: var(--bg);
+}
+.investor-cat-pill:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.investor-cat-ico {
+  font-size: 16px;
+  width: 20px;
+  text-align: center;
+  flex-shrink: 0;
+}
+.investor-cat-label {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .banner {
@@ -942,7 +925,7 @@ button { font-family: inherit; }
   align-items: center;
   gap: 10px;
   padding: 8px 14px;
-  background: var(--surface-raised);
+  background: var(--surface);
   border: 1px solid var(--border-glass);
   border-radius: var(--radius-pill);
   font: inherit;
@@ -957,31 +940,39 @@ button { font-family: inherit; }
 /* ────────────────────────────────────────────────────────────────────────
    ChatBox (AI assistant)
    ──────────────────────────────────────────────────────────────────────── */
+/* Circular FAB — stacked directly above the Hoja/Kolo pill in the
+   bottom-right corner. ~44 px gap leaves room for the toggle below. */
 .chat-toggle {
   position: fixed;
-  bottom: 16px;
-  right: 240px;
+  bottom: 76px;
+  right: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
   background: var(--accent);
   color: var(--text-on-accent);
   border: 1px solid var(--accent-strong);
-  padding: 10px 18px;
-  border-radius: var(--radius-pill);
-  font: inherit;
-  font-weight: 600;
-  font-size: 13px;
+  border-radius: 50%;
+  padding: 0;
   cursor: pointer;
-  box-shadow: var(--shadow-md);
+  box-shadow: var(--shadow-lg);
   z-index: 30;
   transition: background 140ms ease, transform 140ms ease, box-shadow 140ms ease;
 }
 .chat-toggle:hover {
   background: var(--accent-strong);
-  transform: translateY(-1px);
-  box-shadow: var(--shadow-lg);
+  transform: translateY(-1px) scale(1.05);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
 }
 .chat-toggle:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+.chat-toggle svg {
+  width: 22px;
+  height: 22px;
 }
 .chat-box {
   position: fixed;
@@ -1063,12 +1054,13 @@ button { font-family: inherit; }
 }
 .chat-input {
   display: flex;
+  align-items: flex-end;
   padding: 12px;
   border-top: 1px solid var(--border-glass);
   background: var(--surface-raised);
   gap: 8px;
 }
-.chat-input input {
+.chat-input textarea {
   flex: 1;
   padding: 9px 14px;
   border: 1px solid var(--border-glass);
@@ -1076,12 +1068,17 @@ button { font-family: inherit; }
   outline: none;
   font: inherit;
   font-size: 13px;
+  line-height: 1.4;
   background: var(--surface);
   color: var(--text-primary);
+  resize: none;
+  overflow-y: auto;
+  min-height: 38px;
+  max-height: 120px;
   transition: border-color 120ms ease;
 }
-.chat-input input:focus { border-color: var(--accent); }
-.chat-input input::placeholder { color: var(--text-tertiary); }
+.chat-input textarea:focus { border-color: var(--accent); }
+.chat-input textarea::placeholder { color: var(--text-tertiary); }
 .chat-input button {
   background: var(--accent);
   color: var(--text-on-accent);
@@ -1133,7 +1130,7 @@ button { font-family: inherit; }
 .api-docs-tabs {
   display: inline-flex;
   margin-top: 14px;
-  background: var(--surface-raised);
+  background: var(--surface);
   border: 1px solid var(--border-glass);
   border-radius: var(--radius-pill);
   padding: 3px;
