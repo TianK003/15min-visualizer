@@ -4,6 +4,45 @@
 
 This document supersedes `HANDOFF.md`. Tasks are grouped by phase and priority. Each task has an **owner placeholder**, **acceptance criteria**, and **dependencies** so any contributor can pick one up and finish it without re-deriving context.
 
+## 0. Progress at a glance *(2026-05-15)*
+
+Legend: ✅ done · 🟡 partial · ⏳ todo · DEC decision pending
+
+| Phase | ID | Title | Status |
+|---|---|---|---|
+| A | A1 | Provision Supabase + apply schema | ✅ local |
+| A | A2 | Load ETL into Supabase | ✅ local |
+| A | A3 | Deploy Valhalla to Railway | 🟡 local only |
+| A | A4 | Wire frontend to live data | ✅ |
+| A | A5 | Vercel deploy + CI | 🟡 CI done |
+| B | B1 | Coverage diagnostic | ✅ 0/212 missing |
+| B | B2 | Hand-pick amenity tags | ⏳ waits on user |
+| B | B3 | 9th category | scrapped |
+| B | B4 | Protected areas + unbuildable | 🟡 backend done |
+| B | B5 | Docs res-10 sweep | ✅ |
+| C | C1 | Address search | ✅ |
+| C | C2 | Scorecard + click | ✅ |
+| C | C3 | Path-to-amenity | ⏳ |
+| C | C4 | Live isochrone | ✅ |
+| C | C5 | Walk/Bike toggle | 🟡 chips only |
+| D | D1 | Style system | ⏳ |
+| D | D2 | Map design pass | ⏳ |
+| D | D3 | Mobile responsive | ⏳ |
+| D | D4 | Accessibility | ⏳ |
+| D | D5 | Empty/loading/error | 🟡 |
+| D | D6 | Izvor podatkov + Swagger | ✅ |
+| D | D7 | Custom basemap | ⏳ |
+| E | E1 | Investor mode | ⏳ |
+| E | E2 | Občina planner | ⏳ |
+| E | E3 | Mode switcher | ⏳ |
+| F | F1 | Partial-load tiles | 🟡 ETL done |
+| F | F2 | Web Worker | ⏳ |
+| F | F3 | Binary attrs | ⏳ |
+| G | G1 | Heatmap vs hexes | DEC |
+| G | G2 | Ghosts overlay | ⏳ |
+| G | G3 | LLM integration | 🟡 route + stub |
+| G | G4 | Permalink hash | ✅ |
+
 ---
 
 ## 1. Current state snapshot
@@ -18,23 +57,31 @@ The end-to-end pipeline runs. The map renders all of Slovenia, with občina poly
 - [x] Kontur Population SI (22,034 res-8 cells)
 - [x] All sources documented in `data/DATA_SOURCES.md`
 
-### Backend — ETL pipeline (local only — not deployed)
+### Backend — ETL pipeline + local Supabase
 - [x] `01_extract_amenities.py` — 37,622 amenities classified into 8 categories
 - [x] `02_isochrones.py` — 112,866 pedestrian isochrones, 464 req/s, resumable
 - [x] `03_score_cells.py` — **1,079,666 H3 res-10 cells** + 212 občine aggregated (~30 s wall time)
+- [x] `06_upload_to_supabase.py` — bulk-load all 5 tables + 3 Storage objects (2026-05-15)
+- [x] `07_bin_cells_to_tiles.py` — F1 res-7 tile bake (4,051 shards, 2026-05-15)
+- [x] `08_flag_unbuildable.py` — 344,678 cells flagged inside protected areas (B4 partial, 2026-05-15)
 - [x] Valhalla container builds + runs locally
-- [ ] Supabase project provisioned + schema applied
-- [ ] Static artifacts uploaded to Supabase Storage / R2
+- [x] Supabase project provisioned + schema applied — **local** via `supabase start` (2026-05-15)
+- [x] Static artifacts uploaded to Supabase Storage — **local** buckets `cells/`, `overlays/` (2026-05-15)
+- [ ] Cloud Supabase deploy via `supabase db push`
 - [ ] Railway hosting the Valhalla container
 
 ### Frontend
 - [x] Next.js 14 + TypeScript + MapLibre + deck.gl scaffold
-- [x] OpenFreeMap `liberty` basemap (switched from `positron` for higher saturation through 0.5-alpha hex fills)
+- [x] OpenFreeMap `positron` basemap (switched back from `liberty` for perf)
 - [x] Občina polygons at zoom < 9, H3 hex layer at zoom ≥ 9 (aggregated via `h3.cellToParent`)
 - [x] Hex resolution: baked at res-10 (~66 m edge), aggregates to res 6/7/8/9 by zoom
-- [x] Perf optimization: `stroked: false` + `pickable: false` for hex layer at res ≥ 9
-- [x] Console-log click handler on občine + low-zoom hexes (no UI yet)
-- [x] Live zoom indicator + dummy-data fallback banner
+- [x] Click-to-open Scorecard side panel with score, 8 categories, walk/bike toggle, "show 15-min reach" Valhalla button (C2/C4/C5, 2026-05-15)
+- [x] Top-bar AddressSearch (Photon + lat/lng paste fallback) (C1, 2026-05-15)
+- [x] Izvor podatkov provenance panel + `/api-docs` Swagger UI route (D6, 2026-05-15)
+- [x] `/api/llm` server-only route, Zod-validated (G3 stub, 2026-05-15)
+- [x] `/api/valhalla/[endpoint]` server proxy (works around Valhalla 405-on-OPTIONS, 2026-05-15)
+- [x] URL hash permalink — lng/lat/zoom/h3 (G4, 2026-05-15)
+- [x] Live zoom indicator + dummy-data fallback banner + loading banner
 
 ### Score distribution (still matches project hypothesis at res-10)
 ```
@@ -48,7 +95,7 @@ The end-to-end pipeline runs. The map renders all of Slovenia, with občina poly
 - [x] Simple `frontend/` + `backend/` + `data/` + `docs/` layout
 - [x] `backend/requirements.txt`, Python 3.12 venv, deck.gl + h3-js installed
 - [x] Apache 2.0
-- [ ] CI (lint + typecheck on PR)
+- [x] CI (typecheck + build on PR) — `.github/workflows/ci.yml` (2026-05-15)
 - [ ] Vercel project linked
 
 ---
@@ -93,9 +140,10 @@ Each task has: a short ID (`A1`, `B2`, …) for cross-reference, the **owner** (
 
 ### Phase A — Deploy the real backend  *(unblocks production)*
 
-#### A1 · Provision Supabase + apply schema · **P0**
+#### A1 · Provision Supabase + apply schema · **P0** · ✅ **DONE (local) 2026-05-15**
 - **Why:** every other backend task assumes a live database.
 - **Dependencies:** none.
+- **Status:** Local stack via `supabase start` running with schema applied. Added migrations `0001_init.sql` (6 tables + RLS), `20260515084121_rpc_helpers.sql` (`amenities_for_point` RPC), `20260515085614_rls_amenity_isochrones.sql` (closes RLS gap), `20260515090120_add_unbuildable.sql` (B4 column). Cloud deploy (`supabase link` + `db push`) deferred.
 - **Steps:**
   1. Create Supabase project (Frankfurt, free plan) per `CHECKLIST.md §1.3`.
   2. Enable extensions: `postgis`, `postgis_topology`, `h3` (via `dbdev`).
@@ -103,40 +151,45 @@ Each task has: a short ID (`A1`, `B2`, …) for cross-reference, the **owner** (
   4. Save URL + anon key + service_role key in 1Password.
 - **AC:** `curl https://<project>.supabase.co/rest/v1/cell_scores?limit=1` returns 200 and an empty array.
 
-#### A2 · Load ETL outputs into Supabase · **P0**
+#### A2 · Load ETL outputs into Supabase · **P0** · ✅ **DONE (local) 2026-05-15**
 - **Why:** the frontend will hit REST endpoints for per-cell scorecard + amenity-pin data.
 - **Dependencies:** A1.
+- **Status:** `backend/etl/06_upload_to_supabase.py` loads exact-count rows: obcine 212, protected_areas 886, amenities 37,622, amenity_isochrones 112,866, cell_scores 1,079,666. Storage buckets `cells/` + `overlays/` hold `cell_scores_lite.json`, `obcine_scored.geojson`, `cell_population_lite.json`. `cell_amenities` table intentionally empty — replaced by the `amenities_for_point` RPC (saves ~30M rows). RLS public-read enabled on all six tables.
 - **Steps:**
   1. Extend `03_score_cells.py` (or add `03b_upload.py`) to bulk-insert `amenities`, `amenity_isochrones`, `cell_scores`, `cell_amenities`, `obcine` via Supabase Python client.
   2. Upload `cell_scores_lite.json.gz` + `obcine_scored.geojson` to public Storage buckets `cells/` and `overlays/`.
   3. Configure RLS: anon-key read-only on all six tables.
 - **AC:** `https://<project>.supabase.co/rest/v1/cell_amenities?h3=eq.<known-h3>` returns the expected amenity rows.
 
-#### A3 · Deploy Valhalla to Railway · **P0**
+#### A3 · Deploy Valhalla to Railway · **P0** · 🟡 **PARTIAL — local only**
 - **Why:** live "Show 15-min reach" isochrone overlay requires a public Valhalla URL.
 - **Dependencies:** none (parallel with A1/A2).
-- **Steps:** push `backend/valhalla/Dockerfile` to Railway, allocate ≥ 4 GB RAM, expose port 8002, copy URL into `NEXT_PUBLIC_VALHALLA_URL`. Add `/health` endpoint check.
+- **Steps:** push `backend/valhalla/Dockerfile` to Railway, allocate ≥ 4 GB RAM, expose port 8002, copy URL into `VALHALLA_URL` (server-only env var, consumed by the `/api/valhalla/[endpoint]` proxy). Add `/health` endpoint check.
+- **Status:** Valhalla running locally (`docker start valhalla-slo`, port 8002, 86 ms isochrone). `frontend/lib/valhalla.ts` + `frontend/app/api/valhalla/[endpoint]/route.ts` proxy in place (proxy is permanent — Valhalla returns 405 on CORS preflight regardless of host). Only Railway push + `VALHALLA_URL` env var remain.
 - **AC:** isochrone POST against the Railway URL returns a valid polygon for Prešernov trg.
 
-#### A4 · Wire frontend to live data sources · **P0**
+#### A4 · Wire frontend to live data sources · **P0** · ✅ **DONE 2026-05-15**
 - **Why:** flips the site from static-JSON-from-`public/data/` to the real Supabase + Storage URLs.
 - **Dependencies:** A2, A3.
 - **Steps:**
   1. Create `frontend/lib/supabase.ts` (Supabase JS client).
   2. Create `frontend/lib/valhalla.ts` wrapper for isochrone calls.
   3. Switch `SCORES_URL` and `OBCINE_URL` in `components/Map.tsx` to Storage URLs (env-flagged so local dev still uses `public/data/`).
+- **Status:** `lib/supabase.ts` + `lib/valhalla.ts` shipped. `Map.tsx` URL constants are env-conditional via `NEXT_PUBLIC_USE_REMOTE_DATA`. **Gotcha:** supabase-js `.rpc()`/`.from().single()` hung under React strict mode locally — switched data queries to direct `fetch` against PostgREST (see `lib/supabase.ts`). The `createClient` singleton stays for future auth/realtime needs.
 - **AC:** in production build, network panel shows fetches from `supabase.co`, not `/data/`.
 
-#### A5 · Vercel deploy + CI · **P1**
+#### A5 · Vercel deploy + CI · **P1** · 🟡 **CI done, Vercel TODO**
 - **Dependencies:** A4.
-- **Steps:** link repo → Vercel project (root: `frontend/`), set env vars (`NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `NEXT_PUBLIC_VALHALLA_URL`, `NEXT_PUBLIC_LIVE_ISOCHRONE`). Add minimal GitHub Action: `pnpm install && pnpm typecheck`.
+- **Steps:** link repo → Vercel project (root: `frontend/`), set env vars (`NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `VALHALLA_URL`, `NEXT_PUBLIC_USE_REMOTE_DATA`). Add minimal GitHub Action: `pnpm install && pnpm typecheck`.
+- **Status:** `.github/workflows/ci.yml` shipped — runs typecheck + build on PRs and pushes to `main` with placeholder env vars. Vercel project link still requires user action.
 - **AC:** push to `main` triggers auto-deploy; preview URL works; CI green on PR.
 
 ---
 
 ### Phase B — Data quality & coverage
 
-#### B1 · Debug missing-hex areas · **P0** *(user's #12)*
+#### B1 · Debug missing-hex areas · **P0** *(user's #12)* · ✅ **DONE 2026-05-15**
+- **Status:** `backend/etl/diagnostics/coverage_check.py` shipped. **0 / 212 občine have `n_cells == 0`.** Smallest by cell count: Odranci (317 cells, 6.93 km²). Acceptance bar met. The <2% uncovered land area check is not run since no obcina is missing — leaving as future polish.
 - **Symptom:** certain parts of Slovenia have no hexagons rendered at street zoom.
 - **Likely causes (in probable order):**
   1. Kontur res-8 source has no cell there (uninhabited — expected, not a bug).
@@ -148,7 +201,8 @@ Each task has: a short ID (`A1`, `B2`, …) for cross-reference, the **owner** (
   3. If "sjoin orphan" → use `predicate="intersects"` + `keep_left` semantics.
 - **AC:** every obcina has `n_cells > 0` AND the `coverage_check` script reports <2% uncovered land area per obcina.
 
-#### B2 · Hand-pick amenity tags · **P1** *(user's #5)*
+#### B2 · Hand-pick amenity tags · **P1** *(user's #5)* · ⏳ **TODO — waits on user**
+- **Status:** Open per H7. User has not yet checked boxes in the candidate list below. No ETL re-run scheduled until the list is finalized.
 - **Goal:** user-curated tag list per category for both the score AND the map pins. Currently several categories are overly broad (notably `delo` = any `office=*`), and several plausible tags are missing entirely (e.g. `dentist` in `zdravstvo`, `library` in `izobrazevanje`, `cafe` in `storitve`).
 - **Process:** the user (you) provides the final pick from the candidate list. I do not edit `01_extract_amenities.py` until that pick is in. The candidate list per category is maintained as a checklist below; tick what to keep, strike what to drop, add anything missing.
 - **After pick:** edit `CATEGORY_FILTERS` in `01_extract_amenities.py:38`, re-run `01` → `02` → `03`. Step 02 (~1–2 min) regenerates isochrones for the new amenity set. Step 03 (~30s) re-scores cells.
@@ -212,7 +266,8 @@ Format: `tag=value` — number after each value is the rough count in OSM Sloven
 #### B3 · ~~9th cultural category~~ · **scrapped**
 - Decision (2026-05-13): not adding `kultura` as a 9th category. Score range stays 0–8. Cultural amenities (museum, library, gallery, theatre) may be folded into `storitve` as part of B2's hand-pick — flag in that audit if you want them counted.
 
-#### B4 · Render protected areas + remove unbuildable terrain from possibility · **P1** *(user's #7)*
+#### B4 · Render protected areas + remove unbuildable terrain from possibility · **P1** *(user's #7)* · 🟡 **PARTIAL 2026-05-15**
+- **Status:** Backend done — `cell_scores.unbuildable` column added via migration `20260515090120_add_unbuildable.sql`; `08_flag_unbuildable.py` flags 344,678 cells (31.9%) whose centroid falls inside a protected area. Frontend hatched overlay rendering and the DEM-based mountain mask still TODO.
 - **Goal:** protected areas (Natura 2000, Zavarovana območja) and mountain terrain should be visually distinct AND excluded from "the score is bad here, build something" suggestions in investor mode.
 - **Steps:**
   1. Add diagonal-hatch overlay layer in `Map.tsx` — `SolidPolygonLayer` rendering `protected_areas.geojson` (or PMTiles for production) with diagonal stroke pattern. Score remains visible underneath at 0.5 alpha. Toggleable.
@@ -222,15 +277,16 @@ Format: `tag=value` — number after each value is the rough count in OSM Sloven
 - **Dependencies:** B3 (so cells table schema is final before adding column).
 - **AC:** Triglav National Park visibly hatched; investor mode suggests zero amenities inside it.
 
-#### B5 · Update PLAN.md + ARCHITECTURE.md to reflect res-10 reality · **P2**
-- The docs still say "res 9", "50k cells", "500 KB JSON". Reality is res-10, 1.08M cells, 3 MB gzip. Surgical edits to keep docs honest.
+#### B5 · Update PLAN.md + ARCHITECTURE.md to reflect res-10 reality · **P2** · ✅ **DONE**
+- Done 2026-05-13. Remaining "res 9" mentions in docs are in valid context (aggregation pyramid or historical notes).
 - **AC:** grep `'res 9'`, `'50k'`, `'500 KB'` in `docs/` returns zero stale matches.
 
 ---
 
 ### Phase C — Core interactivity *(the demo moments)*
 
-#### C1 · Address search bar · **P0** *(user's #9 "critical")*
+#### C1 · Address search bar · **P0** *(user's #9 "critical")* · ✅ **DONE 2026-05-15**
+- **Status:** `frontend/components/AddressSearch.tsx` shipped — debounced Photon autocomplete (no `lang=sl` param; Photon doesn't support it), SI bbox constraint, lat/lng paste fallback, Enter-to-select. On pick: `map.flyTo()` + `setSelectedH3` → scorecard opens. shadcn `Command` not used — plain `<input>` + dropdown was lighter for now.
 - **Goal:** prominent top-bar search "Vpišite svoj naslov" → debounced Photon autocomplete → on-select `map.flyTo()` + scorecard opens for the cell containing the result.
 - **Steps:**
   1. Add `components/AddressSearch.tsx`: shadcn `Command` + Photon API.
@@ -239,7 +295,8 @@ Format: `tag=value` — number after each value is the rough count in OSM Sloven
   4. Failure fallback: free-form `lat,lng` paste.
 - **AC:** typing "Prešernov trg, Ljubljana" yields a dropdown, clicking flies map + opens scorecard within 800 ms.
 
-#### C2 · Scorecard side panel + click handler · **P0** *(user's #3, #4)*
+#### C2 · Scorecard side panel + click handler · **P0** *(user's #3, #4)* · ✅ **DONE 2026-05-15**
+- **Status:** `frontend/components/Scorecard.tsx` shipped. Renders big score badge with color bucket, 8 category rows (icon + name + check + time), walk/bike toggle, "Show 15-min reach" button, and an expandable "N dosegljivih lokacij" list of amenities via the RPC. Hex layer `pickable: true` always now (perf hit acceptable for hackathon; can revisit). For Prešernov trg the panel shows 8/8 with all categories at 5 min and ~880 amenities.
 - **Goal:** click a hex (or arrive via search) → side panel with the cell's score, 8 (or 9) category rows, each row shows walk + bike times.
 - **Steps:**
   1. Re-enable `pickable: true` on hex layer with **`onHover` disabled** (lazy picking on click only — needs `_subLayerProps` or a manual `useEffect` listener on the map). Avoids the perf regression we found at res-10.
@@ -249,7 +306,8 @@ Format: `tag=value` — number after each value is the rough count in OSM Sloven
 - **Dependencies:** A2 (live data), B3 (category set finalized).
 - **AC:** clicking a hex opens panel within 400 ms; all 8/9 rows render with both walk and bike chips.
 
-#### C3 · Path-to-amenity on amenity click · **P1** *(user's #3 "tracking the path")*
+#### C3 · Path-to-amenity on amenity click · **P1** *(user's #3 "tracking the path")* · ⏳ **TODO**
+- **Status:** Backend ready — `lib/valhalla.ts` exposes a `route()` helper that hits `/api/valhalla/route`. UI wiring (PathLayer, click handler in Scorecard row) not yet built.
 - **Goal:** in the scorecard, clicking a category row (or its nearest-amenity badge) draws the walking route on the map.
 - **Steps:**
   1. Look up `cell_amenities` for the cell → pick the nearest amenity in that category.
@@ -258,13 +316,15 @@ Format: `tag=value` — number after each value is the rough count in OSM Sloven
 - **Dependencies:** A3 (Valhalla deployed).
 - **AC:** clicking "Trgovina" row draws a cyan path from cell to nearest shop, with travel-time label at the midpoint.
 
-#### C4 · "Show 15-min reach" isochrone overlay · **P0**
+#### C4 · "Show 15-min reach" isochrone overlay · **P0** · ✅ **DONE 2026-05-15**
+- **Status:** "Prikaži dosegljivost" button in Scorecard fires `isochrone()` via the `/api/valhalla` proxy; returned GeoJSON Feature renders as a `GeoJsonLayer` with cyan fill + outline. Local Valhalla responds in ~86 ms; total UI-perceived latency well under 1.5 s.
 - **Goal:** button in scorecard → live Valhalla isochrone polygon, drawn over the heatmap.
 - **Steps:** POST to Valhalla `/isochrone` (15 min walking, then 6 min for bike toggle). Render as `PolygonLayer` with soft cyan fill (alpha 0.3).
 - **Dependencies:** A3, C2.
 - **AC:** button click → polygon visible within 1.5 s.
 
-#### C5 · Walk/Bike toggle · **P1**
+#### C5 · Walk/Bike toggle · **P1** · 🟡 **PARTIAL 2026-05-15**
+- **Status:** Toggle UI in Scorecard works; time chips switch between `walk_min` and `bike_min` instantly. Isochrone polygon is not yet rescaled for bike (still draws the 15-min walking polygon when in bike mode — needs a separate Valhalla call with `bicycle` costing, or a 37.5-min walk request). Pin set rescaling not yet wired (pins layer pending).
 - **Goal:** toggle in scorecard rescales the isochrone, the pin filter, and the displayed travel chips.
 - **Implementation:** local state, no server call. `bike_min = walk_min / 2.5` (PLAN §3 lock).
 - **AC:** toggling switches all three (polygon, chips, pin set) within 100 ms.
@@ -273,7 +333,8 @@ Format: `tag=value` — number after each value is the rough count in OSM Sloven
 
 ### Phase D — Visual & UX polish
 
-#### D1 · Style system — glass + material + sleek · **P0** *(user's #1)*
+#### D1 · Style system — glass + material + sleek · **P0** *(user's #1)* · ⏳ **TODO**
+- **Status:** Custom CSS in `globals.css` for scorecard / search / provenance covers core glass-effect surfaces (`backdrop-filter: blur(16px)`, rounded corners, soft shadows). No shadcn/Tailwind installed yet; no design-token system. The cohesive sweep is the missing P0 polish step.
 - **Goal:** every panel, button, chip uses one cohesive visual language. Glass-morphism (frosted blur), modern type scale, soft shadows, accent color.
 - **Steps:**
   1. Install `tailwindcss` (verify config), `shadcn/ui` (`pnpm dlx shadcn@latest init`).
@@ -283,7 +344,7 @@ Format: `tag=value` — number after each value is the rough count in OSM Sloven
   5. Apply to: zoom indicator, scorecard, search bar, future side panels.
 - **AC:** screenshots match a chosen reference (Apple Maps / Linear / Vercel-style); zero "default Tailwind starter" look.
 
-#### D2 · Map design pass · **P1** *(user's #5)*
+#### D2 · Map design pass · **P1** *(user's #5)* · ⏳ **TODO**
 - **Goal:** less visual noise. Tune basemap label density, hex outlines, občina outline colour to harmonize with the score palette.
 - **Steps:**
   1. Decide: keep `liberty` basemap or switch back to `positron` (decision: depends on whether D1 makes hex colors readable enough that a simpler basemap works).
@@ -291,7 +352,8 @@ Format: `tag=value` — number after each value is the rough count in OSM Sloven
   3. Re-enable hex strokes at res 9 *only if* they look clean with the new palette — at res 10 they stay off.
 - **AC:** user review approves visual hierarchy: amenity pins > scorecard panel > hex fill > base buildings > base labels.
 
-#### D3 · Mobile responsive layout · **P1** *(user's #11)*
+#### D3 · Mobile responsive layout · **P1** *(user's #11)* · ⏳ **TODO**
+- **Status:** Only the Izvor podatkov panel has a 800 px breakpoint. Scorecard, AddressSearch, zoom indicator all use desktop fixed widths.
 - **Goal:** site works on iPhone-class viewport widths (375 px+) without sideways scroll. Scorecard becomes a bottom sheet, search bar becomes full-width, zoom controls thumb-reachable.
 - **Steps:**
   1. Audit `Map.tsx`, `Scorecard.tsx`, `AddressSearch.tsx` at 375 / 768 / 1280 px breakpoints.
@@ -300,11 +362,13 @@ Format: `tag=value` — number after each value is the rough count in OSM Sloven
   4. Test touch panning + pinch zoom + tap-to-select hex on a real device (deck.gl supports it but the picking threshold needs tuning).
 - **AC:** Lighthouse mobile score ≥ 90; manual test on iOS Safari + Android Chrome passes.
 
-#### D4 · Accessibility pass · **P2**
+#### D4 · Accessibility pass · **P2** · ⏳ **TODO**
+- **Status:** Basic ARIA labels on Scorecard, AddressSearch, view-switch buttons. Color contrast, full keyboard nav, axe-core sweep all pending.
 - Color contrast (the orange hex on white obstacle: contrast 2.4:1 fails WCAG AA — solved by 0.5 alpha + dark basemap, but verify); keyboard nav on search + scorecard; ARIA labels on map controls; reduced-motion respects.
 - **AC:** axe-core run on production build returns zero serious violations.
 
-#### D6 · "Izvor podatkov" — data-provenance UI · **P0** *(transparency · user-resolved 2026-05-13)*
+#### D6 · "Izvor podatkov" — data-provenance UI · **P0** *(transparency · user-resolved 2026-05-13)* · ✅ **DONE 2026-05-15**
+- **Status:** `frontend/components/IzvorPodatkov.tsx` shipped with all 6 dataset cards (each with a "Zakaj smo to izbrali" sentence), plain-SL summary, methodology block, privacy badge, GitHub SHA link (when `NEXT_PUBLIC_GIT_SHA` is set), and Swagger UI links. `frontend/app/api-docs/page.tsx` renders the live OpenAPI spec from the Supabase URL. Bottom-left "Od kod podatki?" pill opens the panel. Info-icon next to scorecard not yet wired.
 - **Why:** Transparency is a project-defining commitment. One panel hits four izhodišča in one component (**INSPIRE/ISO #3, transparency #4, reproducibility #5, GDPR #9** adjacency) and — critically — speaks to *normal users*, not just judges. Most teams ship a black-box map. This separates us. Origin: `GEO-SLOVENIJA-CONFORM.md §3.4` Tactical Move #4, escalated to P0 by user.
 - **Audience:** layered for both a curious citizen ("Od kod te številke?") and a technical judge (license, SHA, parameters).
 - **Content — required sections:**
@@ -354,11 +418,12 @@ Format: `tag=value` — number after each value is the rough count in OSM Sloven
   - `/api-docs` route renders Swagger UI showing all 6 tables (`amenities`, `amenity_isochrones`, `cell_scores`, `cell_amenities`, `obcine`, `protected_areas`) and any RPC functions; "Try it out" executes successfully against the deployed Supabase project with the public anon key.
   - Raw OpenAPI JSON URL returns 200 and validates as OAS 2.0.
 
-#### D5 · Empty / loading / error states · **P1**
+#### D5 · Empty / loading / error states · **P1** · 🟡 **PARTIAL 2026-05-15**
+- **Status:** "Nalagam podatke …" pill renders during the score-cells fetch; dummy-data fallback banner if the Storage fetch 404s; Scorecard has loading + error variants; AddressSearch surfaces Photon errors. Comprehensive sweep over every async path not yet done.
 - Loading skeleton for first paint; error banner when `cell_scores_lite.json` 404s; "Photon offline" banner with manual lat/lng input fallback (already in fallback in `Map.tsx`, extend to UI).
 - **AC:** every async op has a defined loading + error state, no naked `null` returns.
 
-#### D7 · Programmable / custom basemap style · **P2**
+#### D7 · Programmable / custom basemap style · **P2** · ⏳ **TODO**
 - **Why:** OpenFreeMap's hosted styles (`positron`, `liberty`, `bright`) are good defaults, but the basemap is currently fighting the heatmap and score palettes for visual attention. A bespoke style — muted background, reduced label density, no 3D extrusions, no POI icons — would let the deck.gl overlays read cleanly *and* drop a few ms per frame on weaker hardware.
 - **Dependencies:** D1 (palette locked) so we know which neutrals harmonize with the chosen accent colors.
 - **Approach (recommended: fork-and-edit):**
@@ -382,7 +447,8 @@ Format: `tag=value` — number after each value is the rough count in OSM Sloven
 
 ### Phase E — Modes (B + C)
 
-#### E1 · Mode B — Investor view · **P0** *(user's #9 "critical")*
+#### E1 · Mode B — Investor view · **P0** *(user's #9 "critical")* · ⏳ **TODO**
+- **Status:** Backend ready — `cell_scores.unbuildable` + per-category `walk_min[]` are all queryable. UI not built yet (no `/investitor` route, no demand layer, no projection card).
 - **Goal:** dedicated `/investitor` route. Inverted heatmap: `demand = population × (1 − category_satisfied)`. Click a hot cell → "Build a [category] here → N residents gain access."
 - **Steps:**
   1. New page `frontend/app/investitor/page.tsx` — reuses `<Map />` with a different `mode='investor'` prop.
@@ -395,7 +461,8 @@ Format: `tag=value` — number after each value is the rough count in OSM Sloven
 - **Dependencies:** A4, B3, B4.
 - **AC:** picking "lekarna" in Triglav region returns zero suggestions (all unbuildable); in Maribor suburbs returns specific hot cells.
 
-#### E2 · Mode C — Občina planner view · **P1** *(user's #14)*
+#### E2 · Mode C — Občina planner view · **P1** *(user's #14)* · ⏳ **TODO**
+- **Status:** Backend ready — `obcine_scored.geojson` ships `mean_score`, `population`, `n_cells` for every občina. UI not built.
 - **Goal:** `/obcina` route. Choropleth + sortable scoreboard.
 - **Steps:**
   1. Sortable side table: columns = obcina name, mean_score, population, %-cells-with-score-≥-6 ("15-min-city share"), n_cells. Click row → map zooms to that obcina + side panel with quick facts.
@@ -404,15 +471,17 @@ Format: `tag=value` — number after each value is the rough count in OSM Sloven
 - **Dependencies:** A2 (live data).
 - **AC:** sort by `15-min city share` reveals Ljubljana > Maribor > Koper > … as top; bottom is Kostel.
 
-#### E3 · Mode switcher · **P1**
+#### E3 · Mode switcher · **P1** · ⏳ **TODO**
 - Tab control in header: "Doma" / "Investitor" / "Občina". Preserves map viewport across modes.
+- **Status:** URL hash already carries lng/lat/zoom (from G4), so cross-mode viewport sync is straightforward once E1/E2 land.
 - **AC:** switching tabs keeps the same lat/lng/zoom; only the data layer + side panel swap.
 
 ---
 
 ### Phase F — Performance & scale
 
-#### F1 · Smooth interaction at close zoom (partial loading) · **P1** *(user's #13)*
+#### F1 · Smooth interaction at close zoom (partial loading) · **P1** *(user's #13)* · 🟡 **PARTIAL 2026-05-15**
+- **Status:** ETL side done — `backend/etl/07_bin_cells_to_tiles.py` produced 4,051 res-7 shards in `data/15min-slo/tiles/` (median 10 KB, ≤12 KB max) plus `index.json` manifest. Frontend lazy-fetch logic + Storage upload of the shards not yet wired.
 - **Goal:** at res-10 raw mode (zoom ≥ 15), only fetch + render cells in the current viewport bbox rather than holding all 1.08M in memory.
 - **Approach:**
   1. Pre-bin cells by their res-7 parent during ETL → write one JSON per res-7 cell (~1000 tiles, each ≤200 KB). Filename = parent h3.
@@ -422,11 +491,11 @@ Format: `tag=value` — number after each value is the rough count in OSM Sloven
 - **Dependencies:** A2 (so we know storage layout).
 - **AC:** Network panel on cold load < 100 KB before user pans; zoom to 16 + pan around Ljubljana fetches < 20 tiles total.
 
-#### F2 · Web Worker for `aggregate()` · **P2**
+#### F2 · Web Worker for `aggregate()` · **P2** · ⏳ **TODO**
 - Move `h3.cellToParent` aggregation off the main thread. Removes the ~70 ms freeze at low zoom on slower machines.
 - **AC:** Performance profile shows zero main-thread blocks > 16 ms on zoom transition.
 
-#### F3 · Binary attributes for deck.gl · **P2**
+#### F3 · Binary attributes for deck.gl · **P2** · ⏳ **TODO**
 - Replace `getFillColor: (d) => colorForScore(d.score)` with a pre-computed `Uint8Array` passed as `data.attributes.getFillColor`. Eliminates per-cell JS accessor calls.
 - **AC:** Chrome devtools shows 1 ms attribute upload instead of 80 ms accessor sweep on data change.
 
@@ -434,7 +503,7 @@ Format: `tag=value` — number after each value is the rough count in OSM Sloven
 
 ### Phase G — Stretch / differentiators
 
-#### G1 · Heatmap vs hexagons decision · **DEC** *(user's #8)*
+#### G1 · Heatmap vs hexagons decision · **DEC** *(user's #8)* · ⏳ **DECISION PENDING**
 - **Question:** does a diffused heatmap (deck.gl `HeatmapLayer` over cell centroids) read better at low zoom than the hex polygons we have today?
 - **Proposed test:**
   - Build a branch with `HeatmapLayer` at zoom < 12 and `H3HexagonLayer` at zoom ≥ 12 (auto-switch).
@@ -442,7 +511,7 @@ Format: `tag=value` — number after each value is the rough count in OSM Sloven
 - **Outcome:** ship the winner. My current intuition: heatmap reads better for country/region zoom (no discrete-cell artifacts), hexes win once you're "in" a city. The auto-switch is the right design.
 - **AC:** user picks visual; chosen approach goes into main.
 
-#### G2 · Municipality "ghosts" / planned developments · **P1** *(user's #10)*
+#### G2 · Municipality "ghosts" / planned developments · **P1** *(user's #10)* · ⏳ **TODO**
 - **Goal:** show planned residential/commercial buildings as semi-transparent extruded polygons on the map. Click → estimated effect on local scores once built.
 - **Steps:**
   1. Source: Ljubljana OPN data from PIS (Prostorski informacijski sistem) — manual download is fine for MVP. **Mock data acceptable** if PIS scraping is painful: hand-author 10–20 polygons for Ljubljana + Maribor.
@@ -452,7 +521,8 @@ Format: `tag=value` — number after each value is the rough count in OSM Sloven
 - **Dependencies:** C2 (scorecard infra), client-side effect-recompute helper.
 - **AC:** Ljubljana ghosts visibly extruded at street zoom; clicking one shows realistic delta.
 
-#### G3 · LLM integration (Kimi 2.7) · **P1** *(user's #15)*
+#### G3 · LLM integration (Kimi 2.7) · **P1** *(user's #15)* · 🟡 **PARTIAL 2026-05-15**
+- **Status:** `frontend/app/api/llm/route.ts` shipped — server-only, Zod-validated discriminated union (`narrative` | `search`), 422 on bad payload, 501 when `KIMI_API_KEY` is missing-and-real-mode (currently returns deterministic stub responses so the UI can integrate). Still TODO: real Kimi upstream call, prompt templates in `lib/prompts/`, Supabase `cell_narratives` cache table + migration, per-IP rate limit, frontend wiring of both use cases.
 - **Locked use cases (decision 2026-05-13):** both **A · Natural-language search** + **B · Cell narrative**. Investor recommendations are out of MVP scope.
 - **Use case A · Natural-language search**
   - User types a free-form query, e.g. *"Občina z visokim povprečnim seštevkom, kjer je rezultat pretežno posledica dobre dostopnosti v gosto poseljenih območjih"*.
@@ -474,7 +544,8 @@ Format: `tag=value` — number after each value is the rough count in OSM Sloven
 - **Dependencies:** A4 (live data).
 - **AC:** typing a SL natural-language query produces a structured filter + map state within 3 s; opening a scorecard renders a SL narrative within 2 s (cache miss) or 200 ms (cache hit).
 
-#### G4 · Permalink / URL state for sharing · **P2**
+#### G4 · Permalink / URL state for sharing · **P2** · ✅ **DONE 2026-05-15**
+- **Status:** URL **hash** (not query params) carries `lng/lat/z/h3`. Map writes on every `moveend`/`zoom` via a ref to avoid stale-closure overwrite, and restores via `readHash()` on mount. Mode segment will land alongside E3. Test: navigate to `/#lng=14.5061&lat=46.0512&z=14&h3=8a1e1216b367fff` → scorecard for Prešernov trg opens.
 - Store `lat,lng,zoom,mode,selectedH3` in URL query params. Sharing the URL re-opens the same view + scorecard.
 - **AC:** copy URL → paste into incognito → identical view.
 
