@@ -27,7 +27,7 @@ BEGIN
   END IF;
 
   RETURN QUERY
-  SELECT c.h3, c.score, c.population
+  SELECT c.h3, c.walk_score AS score, c.population
   FROM cell_scores c
   WHERE 
     -- 1. Geographic Filter (resolved via h3-js in Node.js backend)
@@ -43,7 +43,7 @@ BEGIN
     -- 3. Future modular filters go here:
     -- AND (filter_spec->>'max_price' IS NULL OR c.property_price <= (filter_spec->>'max_price')::numeric)
     
-  ORDER BY c.score DESC, c.population DESC NULLS LAST
+  ORDER BY c.walk_score DESC, c.population DESC NULLS LAST
   LIMIT p_limit;
 END;
 $$ LANGUAGE plpgsql;
