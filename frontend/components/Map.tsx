@@ -363,6 +363,18 @@ export default function SloveniaMap() {
   const [demandCells, setDemandCells] = useState<DemandRow[]>([]);
   const [demandLoading, setDemandLoading] = useState(false);
   const [demandError, setDemandError] = useState<string | null>(null);
+  // Res-6 H3 cells covering the current map viewport. Refreshed on `moveend`
+  // (not on every zoom frame). `null` until the first moveend fires — the
+  // visible* useMemos fall through to the full source array in that case so
+  // the initial paint matches the pre-culling behavior.
+  const [viewportBuckets, setViewportBuckets] = useState<Set<string> | null>(null);
+  // Coarse spatial index: each source array bucketed by its res-6 H3 parent.
+  // Lets the viewport-cull step pull "all cells in these N r6 buckets" in
+  // O(N) instead of scanning the full ~1M array on every pan. Built lazily by
+  // useEffects further down once the source arrays land.
+  const [cellsByR6, setCellsByR6] = useState<Map<string, ScoreCell[]>>(new Map());
+  const [demandByR6, setDemandByR6] = useState<Map<string, DemandCell[]>>(new Map());
+  const [unpopByR6, setUnpopByR6] = useState<Map<string, string[]>>(new Map());
   // Cached obcine GeoJSON — used client-side to synthesize the H3 cells over
   // unpopulated parts of Slovenia. Browser HTTP cache deduplicates with the
   // deck.gl GeoJsonLayer fetch.
@@ -530,12 +542,31 @@ export default function SloveniaMap() {
       setZoom(z);
       writeHash({ lng: c.lng, lat: c.lat, zoom: z, h3id: selectedH3Ref.current });
     };
+    // Viewport-bucket refresh — only on moveend so we don't recompute during
+    // every frame of a zoom animation. maplibre fires moveend after both
+    // panning and zooming finishes, so this single hook covers both.
+    const syncViewportBuckets = () => {
+      const b = map.getBounds();
+      // h3.polygonToCells expects a [lat,lng] ring, closed (first === last).
+      const ring: [number, number][] = [
+        [b.getSouth(), b.getWest()],
+        [b.getSouth(), b.getEast()],
+        [b.getNorth(), b.getEast()],
+        [b.getNorth(), b.getWest()],
+        [b.getSouth(), b.getWest()],
+      ];
+      setViewportBuckets(new Set(h3.polygonToCells(ring, 6)));
+    };
     map.on("zoom", sync);
     map.on("moveend", sync);
+    map.on("moveend", syncViewportBuckets);
+    // Prime once so we don't have to wait for the first user interaction.
+    syncViewportBuckets();
 
     return () => {
       map.off("zoom", sync);
       map.off("moveend", sync);
+      map.off("moveend", syncViewportBuckets);
       map.remove();
       mapRef.current = null;
       overlayRef.current = null;
@@ -570,9 +601,24 @@ export default function SloveniaMap() {
   const showObcineFill = zoom < SHOW_OBCINE_FILL_BELOW;
   const currentRes = zoomToResolution(zoom);
 
+  // Viewport-culled subset of `cells` — pulled from cellsByR6 by the set of
+  // res-6 parents currently in view. Falls through to the full `cells` array
+  // when the bucket map isn't ready yet or before the first `moveend` so the
+  // initial paint matches the pre-culling behavior.
+  const visibleCells = useMemo<ScoreCell[]>(() => {
+    if (showObcineFill) return [];
+    if (cellsByR6.size === 0 || !viewportBuckets) return cells;
+    const out: ScoreCell[] = [];
+    for (const p6 of viewportBuckets) {
+      const bucket = cellsByR6.get(p6);
+      if (bucket) for (const c of bucket) out.push(c);
+    }
+    return out;
+  }, [cells, cellsByR6, viewportBuckets, showObcineFill]);
+
   const aggregatedScores = useMemo(
-    () => (showObcineFill ? [] : aggregateMean(cells, currentRes)),
-    [cells, currentRes, showObcineFill],
+    () => (showObcineFill ? [] : aggregateMean(visibleCells, currentRes)),
+    [visibleCells, currentRes, showObcineFill],
   );
 
   // Synthesize the H3 cells covering Slovenia's unpopulated geography
@@ -634,16 +680,66 @@ export default function SloveniaMap() {
     };
   }, [obcineFC, cells]);
 
+  // Bucket builders for the coarse spatial index. State declarations live
+  // higher up (next to the other dataset state) so they're available to the
+  // consumer useMemos defined before this point.
+  useEffect(() => {
+    if (cells.length === 0) return;
+    let cancelled = false;
+    const id = setTimeout(() => {
+      if (cancelled) return;
+      const m = new Map<string, ScoreCell[]>();
+      for (const c of cells) {
+        const p6 = h3.cellToParent(c.h3, 6);
+        const bucket = m.get(p6);
+        if (bucket) bucket.push(c);
+        else m.set(p6, [c]);
+      }
+      if (!cancelled) setCellsByR6(m);
+    }, 50);
+    return () => { cancelled = true; clearTimeout(id); };
+  }, [cells]);
+
+  useEffect(() => {
+    if (unpopCells.length === 0) return;
+    let cancelled = false;
+    const id = setTimeout(() => {
+      if (cancelled) return;
+      const m = new Map<string, string[]>();
+      for (const h of unpopCells) {
+        const p6 = h3.cellToParent(h, 6);
+        const bucket = m.get(p6);
+        if (bucket) bucket.push(h);
+        else m.set(p6, [h]);
+      }
+      if (!cancelled) setUnpopByR6(m);
+    }, 50);
+    return () => { cancelled = true; clearTimeout(id); };
+  }, [unpopCells]);
+
   // Aggregate unpopulated cells to currentRes so they match the on-screen hex
   // size of the score / investor data they sit underneath. At res-10 itself
   // it's a no-op; below, we dedupe by parent so each rendered hex appears once.
+  // Viewport-culled subset of `unpopCells`. Same fall-through rule as
+  // `visibleCells`. See comment there.
+  const visibleUnpop = useMemo<string[]>(() => {
+    if (showObcineFill) return [];
+    if (unpopByR6.size === 0 || !viewportBuckets) return unpopCells;
+    const out: string[] = [];
+    for (const p6 of viewportBuckets) {
+      const bucket = unpopByR6.get(p6);
+      if (bucket) for (const c of bucket) out.push(c);
+    }
+    return out;
+  }, [unpopCells, unpopByR6, viewportBuckets, showObcineFill]);
+
   const aggregatedUnpop = useMemo<string[]>(() => {
     if (showObcineFill) return [];
-    if (currentRes >= H3_BASE_RES) return unpopCells;
+    if (currentRes >= H3_BASE_RES) return visibleUnpop;
     const parents = new Set<string>();
-    for (const c of unpopCells) parents.add(h3.cellToParent(c, currentRes));
+    for (const c of visibleUnpop) parents.add(h3.cellToParent(c, currentRes));
     return Array.from(parents);
-  }, [unpopCells, currentRes, showObcineFill]);
+  }, [visibleUnpop, currentRes, showObcineFill]);
 
   const animatedPaths = useMemo(
     () => (routeSet && routeSet.paths.length > 0 ? buildAnimatedPaths(routeSet.paths) : null),
@@ -719,18 +815,60 @@ export default function SloveniaMap() {
     return () => { cancelled = true; clearTimeout(id); };
   }, [demandCells, investorCat, catScores]);
 
+  // Bucket the investor-demand cells by res-6 parent — companion to cellsByR6
+  // / unpopByR6 above. Rebuilds whenever investorCells changes (category
+  // toggle re-runs the upstream effect, which is why we key on the post-map
+  // DemandCell[] rather than the raw DemandRow[]).
+  useEffect(() => {
+    if (investorCells.length === 0) return;
+    let cancelled = false;
+    const id = setTimeout(() => {
+      if (cancelled) return;
+      const m = new Map<string, DemandCell[]>();
+      for (const d of investorCells) {
+        const p6 = h3.cellToParent(d.h3, 6);
+        const bucket = m.get(p6);
+        if (bucket) bucket.push(d);
+        else m.set(p6, [d]);
+      }
+      if (!cancelled) setDemandByR6(m);
+    }, 50);
+    return () => { cancelled = true; clearTimeout(id); };
+  }, [investorCells]);
+
+  // Viewport-culled subset of `investorCells`. Same fall-through rule as
+  // `visibleCells`. Note: a category toggle resets `investorCells` ~50–500 ms
+  // before `demandByR6` rebuilds; during that window the bucket map is stale
+  // but the H3 set is unchanged across toggles (only demand values differ),
+  // so the visible subset stays correct in shape — hex colors briefly reflect
+  // the previous category until the bucket rebuild completes.
+  const visibleInvestor = useMemo<DemandCell[]>(() => {
+    if (showObcineFill) return [];
+    if (demandByR6.size === 0 || !viewportBuckets) return investorCells;
+    const out: DemandCell[] = [];
+    for (const p6 of viewportBuckets) {
+      const bucket = demandByR6.get(p6);
+      if (bucket) for (const c of bucket) out.push(c);
+    }
+    return out;
+  }, [investorCells, demandByR6, viewportBuckets, showObcineFill]);
+
   const aggregatedInvestorCells = useMemo(
-    () => (showObcineFill ? [] : aggregateDemand(investorCells, currentRes)),
-    [investorCells, currentRes, showObcineFill],
+    () => (showObcineFill ? [] : aggregateDemand(visibleInvestor, currentRes)),
+    [visibleInvestor, currentRes, showObcineFill],
   );
 
   const demandThresholds = useMemo<DemandThresholds>(() => {
-    if (aggregatedInvestorCells.length === 0) return { p50: 1, p75: 2, p90: 4 };
+    // Anchored on the full `investorCells` set rather than the viewport-culled
+    // `aggregatedInvestorCells`, so hex colors don't shift as the user pans.
+    // Also makes thresholds zoom-band-independent (the previous version
+    // re-aggregated at each `currentRes`, which jittered the percentiles).
+    if (investorCells.length === 0) return { p50: 1, p75: 2, p90: 4 };
     // Filter zero-demand cells out of the percentile calc — they're the
     // "zanemarljivo" sink (fully-served zones, etc.) and would otherwise
     // collapse p50 to zero whenever a saturated category is selected,
     // causing every cell to register as `demand >= p50` and paint teal.
-    const vals = aggregatedInvestorCells
+    const vals = investorCells
       .map((c) => (mode === "walk" ? c.walkDemand : c.bikeDemand))
       .filter((v) => v > 0)
       .sort((a, b) => a - b);
@@ -741,7 +879,7 @@ export default function SloveniaMap() {
       p75: vals[Math.floor(n * 0.75)],
       p90: vals[Math.floor(n * 0.90)],
     };
-  }, [aggregatedInvestorCells, mode]);
+  }, [investorCells, mode]);
 
   // Lazy-load pre-computed building suggestions once when investor view is opened.
   useEffect(() => {
