@@ -2,10 +2,7 @@
 
 // "Od kod podatki?" — D6 provenance panel (P0 per TASKS).
 // Plain-Slovenian dataset cards, methodology summary, reproducibility footer,
-// privacy badge, links to /api-docs (Swagger UI) and the raw OpenAPI JSON,
-// and an inline theme toggle (D8).
-
-import ThemeToggle from "@/components/ThemeToggle";
+// privacy badge, links to /api-docs (Swagger UI) and the raw OpenAPI JSON.
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
 const SHA = process.env.NEXT_PUBLIC_GIT_SHA;
@@ -142,13 +139,8 @@ export default function IzvorPodatkov({ onClose }: Props) {
         </ul>
       </section>
 
-      <section className="provenance-appearance">
-        <h3>Videz</h3>
-        <ThemeToggle variant="inline" />
-      </section>
-
       <footer className="provenance-foot">
-        <span className="badge">🔒 Naslov se ne hrani. Obdelava poteka v vašem brskalniku.</span>
+        <span className="badge">Naslov se ne hrani. Obdelava poteka v vašem brskalniku.</span>
         <span className="lic">Projekt: Apache 2.0 · Atribucija: © OpenStreetMap contributors</span>
       </footer>
     </aside>
