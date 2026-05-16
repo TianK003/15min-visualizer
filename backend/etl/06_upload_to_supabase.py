@@ -30,6 +30,8 @@ import psycopg
 from dotenv import load_dotenv
 from psycopg import sql
 
+from _demographics_helpers import build_h3_to_sifra, load_obcine
+
 ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = ROOT / "data" / "15min-slo"
 
@@ -177,6 +179,13 @@ def upload_isochrones(conn: psycopg.Connection, batch_size: int = 2000) -> None:
 def upload_cell_scores(conn: psycopg.Connection) -> None:
     log("--- cell_scores (~1.08M rows, COPY) ---")
     src = DATA_DIR / "cell_scores.json"
+
+    # Build h3 → sifra ONCE before the copy loop. Adds ~20 s; total runtime
+    # is dominated by the COPY itself anyway. centroid_lat/lng come from h3
+    # so we don't need a parallel structure.
+    obcine = load_obcine()
+    h3_to_sifra = build_h3_to_sifra(obcine)
+
     t = time.time()
     with src.open() as f:
         cells = json.load(f)
@@ -189,8 +198,11 @@ def upload_cell_scores(conn: psycopg.Connection) -> None:
     t = time.time()
     with conn.cursor() as cur:
         with cur.copy(
-            "copy cell_scores (h3, walk_score, bike_score, walk_min, bike_min, population) from stdin"
+            "copy cell_scores "
+            "(h3, walk_score, bike_score, walk_min, bike_min, population, "
+            " sifra, centroid_lat, centroid_lng) from stdin"
         ) as cp:
+            import h3 as h3lib
             for c in cells:
                 walk = c["walk_min"]
                 bike = c.get("bike_min") or [None] * 8
@@ -200,9 +212,46 @@ def upload_cell_scores(conn: psycopg.Connection) -> None:
                 pop_str = "\\N" if pop is None else f"{pop}"
                 walk_score = c.get("walk_score", c.get("score", 0))
                 bike_score = c.get("bike_score", 0)
-                cp.write(f"{c['h3']}\t{walk_score}\t{bike_score}\t{walk_lit}\t{bike_lit}\t{pop_str}\n")
+                # Sifra + centroid. Cells outside any občina polygon get \\N
+                # for sifra and skip centroid (the INNER JOIN in the RPC drops
+                # them).
+                sifra = h3_to_sifra.get(c["h3"])
+                if sifra is None:
+                    sifra_str = "\\N"
+                    lat_str = "\\N"
+                    lng_str = "\\N"
+                else:
+                    lat, lng = h3lib.cell_to_latlng(c["h3"])
+                    sifra_str = str(sifra)
+                    lat_str = f"{lat:.6f}"
+                    lng_str = f"{lng:.6f}"
+                cp.write(
+                    f"{c['h3']}\t{walk_score}\t{bike_score}\t{walk_lit}\t{bike_lit}\t{pop_str}\t"
+                    f"{sifra_str}\t{lat_str}\t{lng_str}\n"
+                )
     conn.commit()
     log(f"  OK: {len(cells):,} cell_scores in {time.time()-t:.1f}s")
+
+
+def upload_obcine_demographics(conn: psycopg.Connection) -> None:
+    """Read obcine_demographics.json (already an artifact of 09_demographics.py)
+    and TRUNCATE + COPY 212 rows into the Postgres table."""
+    log("--- obcine_demographics ---")
+    src = ROOT / "frontend" / "public" / "data" / "obcine_demographics.json"
+    if not src.exists():
+        log(f"  ⚠ {src.relative_to(ROOT)} missing — run 09_demographics.py first; skipping")
+        return
+
+    with src.open() as f:
+        payload = json.load(f)
+
+    with conn.cursor() as cur:
+        cur.execute("truncate table obcine_demographics;")
+        with cur.copy("copy obcine_demographics (sifra, el65, kids) from stdin") as cp:
+            for sifra_str, v in payload.items():
+                cp.write(f"{int(sifra_str)}\t{v['el65']}\t{v['kids']}\n")
+    conn.commit()
+    log(f"  OK: {len(payload):,} obcine_demographics")
 
 
 def upload_storage_files() -> None:
@@ -259,7 +308,8 @@ def upload_storage_files() -> None:
 def verify_counts(conn: psycopg.Connection) -> None:
     log("\n--- verifying row counts ---")
     with conn.cursor() as cur:
-        for t in ("obcine", "protected_areas", "amenities", "amenity_isochrones", "cell_scores"):
+        for t in ("obcine", "protected_areas", "amenities", "amenity_isochrones",
+                  "cell_scores", "obcine_demographics"):
             cur.execute(sql.SQL("select count(*) from {}").format(sql.Identifier(t)))
             (n,) = cur.fetchone()
             log(f"  {t:<22} {n:>10,}")
@@ -274,6 +324,7 @@ def main() -> None:
         upload_amenities(conn)
         upload_isochrones(conn)
         upload_cell_scores(conn)
+        upload_obcine_demographics(conn)   # ← new
         verify_counts(conn)
 
     upload_storage_files()
