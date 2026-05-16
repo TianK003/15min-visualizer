@@ -50,6 +50,8 @@ OBCINE_INPUT = DATA_DIR / "obcine.geojson"
 OBCINE_SCORED = DATA_DIR / "obcine_scored.geojson"
 FRONTEND_OBCINE = ROOT / "frontend" / "public" / "data" / "obcine_scored.geojson"
 SUMMARY = DATA_DIR / "cell_scores_summary.json"
+OUTPUT_DEMAND = DATA_DIR / "cell_demand_lite.json"
+FRONTEND_DEMAND = ROOT / "frontend" / "public" / "data" / "cell_demand_lite.json"
 
 H3_RES = 10
 CATEGORIES = [
@@ -258,12 +260,40 @@ def aggregate_obcine(cells: gpd.GeoDataFrame) -> None:
     print("   ", show.nlargest(5, "bike_mean").to_string(index=False).replace("\n", "\n    "))
 
 
+def export_investor(cells: gpd.GeoDataFrame) -> None:
+    """Pre-bake investor-view demand so the browser doesn't compute it at runtime.
+
+    Output: [{h3, wd, bd, p}] where wd/bd = walk/bike demand (pop × unmet share)
+    and p = per-cell population. The browser uses these values directly, skipping
+    the heavy useEffect compute and the need to load cell_population_lite.json.
+    """
+    print("\nPre-baking investor demand …")
+    rows = []
+    for row in cells[["h3", "walk_score", "bike_score", "population"]].itertuples(index=False):
+        pop = float(row.population)
+        if pop <= 0:
+            continue  # skip cells with no population
+        rows.append({
+            "h3": row.h3,
+            "wd": round(pop * (1.0 - row.walk_score / 8), 3),
+            "bd": round(pop * (1.0 - row.bike_score / 8), 3),
+            "p":  round(pop, 3),
+        })
+    blob = json.dumps(rows, separators=(",", ":"))
+    OUTPUT_DEMAND.write_text(blob)
+    FRONTEND_DEMAND.parent.mkdir(parents=True, exist_ok=True)
+    FRONTEND_DEMAND.write_text(blob)
+    print(f"  ✓ {OUTPUT_DEMAND.relative_to(ROOT)}  ({len(rows):,} cells, {OUTPUT_DEMAND.stat().st_size/1024:,.0f} KB)")
+    print(f"  ✓ {FRONTEND_DEMAND.relative_to(ROOT)}")
+
+
 def main() -> None:
     t0 = time.time()
     cells = load_populated_cells()
     isos = load_isochrones()
     scored = score(cells, isos)
     export(scored)
+    export_investor(scored)
     aggregate_obcine(scored)
     print(f"\nTotal wall time: {(time.time() - t0)/60:.1f} min")
 

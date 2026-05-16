@@ -229,6 +229,7 @@ def upload_storage_files() -> None:
         # to platforms (Vercel, Cloudflare) that gzip-on-the-fly.
         files = [
             ("cells",    "cell_scores_lite.json",     "cell_scores_lite.json",     "application/json",     None),
+            ("cells",    "cell_demand_lite.json",     "cell_demand_lite.json",     "application/json",     None),
             ("overlays", "obcine_scored.geojson",     "obcine_scored.geojson",     "application/geo+json", None),
             ("overlays", "cell_population_lite.json", "cell_population_lite.json", "application/json",     None),
         ]
