@@ -1,0 +1,52 @@
+{
+  "cases": [
+    {
+      "name": "vrtec + zdravstvo + trgovina near Maribor",
+      "filter_spec": { "required_category_indices": [0, 1, 2] },
+      "ranking_weights": { "categories": 0.5, "population": 0.2, "demand": 0, "proximity": 0.3, "bikeability": 0 },
+      "target_lat": 46.5547,
+      "target_lng": 15.6459,
+      "expected_obcina_in_top5": ["Maribor"]
+    },
+    {
+      "name": "investor — high demand for zdravstvo, no anchor",
+      "filter_spec": { "required_category_indices": [] },
+      "ranking_weights": { "categories": 0.1, "population": 0.3, "demand": 0.6, "proximity": 0, "bikeability": 0 },
+      "target_lat": null,
+      "target_lng": null,
+      "expected_obcina_in_top5": ["Ljubljana", "Maribor", "Kranj", "Celje", "Koper"]
+    },
+    {
+      "name": "biker near Bled, work required",
+      "filter_spec": { "required_category_indices": [7] },
+      "ranking_weights": { "categories": 0.2, "population": 0.1, "demand": 0, "proximity": 0.4, "bikeability": 0.3 },
+      "target_lat": 46.3683,
+      "target_lng": 14.1146,
+      "expected_obcina_in_top5": ["Radovljica", "Bled"]
+    },
+    {
+      "name": "no filters, default fallback",
+      "filter_spec": {},
+      "ranking_weights": { "categories": 0, "population": 0, "demand": 0, "proximity": 0, "bikeability": 0 },
+      "target_lat": null,
+      "target_lng": null,
+      "expected_obcina_in_top5": ["Ljubljana"]
+    },
+    {
+      "name": "kids-heavy občina via demographics",
+      "filter_spec": { "required_category_indices": [1] },
+      "ranking_weights": { "categories": 0.4, "population": 0.6, "demand": 0, "proximity": 0, "bikeability": 0 },
+      "target_lat": null,
+      "target_lng": null,
+      "expected_obcina_in_top5": ["Ljubljana", "Maribor"]
+    },
+    {
+      "name": "park required near Kranj",
+      "filter_spec": { "required_category_indices": [3] },
+      "ranking_weights": { "categories": 0.6, "population": 0.1, "demand": 0, "proximity": 0.3, "bikeability": 0 },
+      "target_lat": 46.2389,
+      "target_lng": 14.3556,
+      "expected_obcina_in_top5": ["Kranj"]
+    }
+  ]
+}
