@@ -2,34 +2,70 @@
 
 > Ekipa: **GEOGuessr**
 
-Interaktivni zemljevid, ki pokaže, kolikšen del Slovenije je resnično »15-minutna soseska« — vsako poseljeno H3 celico oceni od 0 do 8, glede na to, koliko dnevnih kategorij dobrin je dosegljivih v 15 minutah hoje ali kolesarjenja. Vse skupaj se agregira navzgor do občin za pogled celotne države.
+Aplikacija na zemljevidu pokaže, kje v Sloveniji lahko vsakdanje obveznosti — od trgovine in šole do zdravnika, parka ali postaje — opraviš peš ali s kolesom v 15 minutah, in kje za to še manjka vsebin. Pokrije celotno državo z drobno mrežo (vsako polje je veliko približno hišni blok) in vsak del oceni od 0 do 8 glede na to, koliko od osmih kategorij dnevnih dobrin je iz njega dosegljivih v tem času.
 
-Aplikacija je razvita za **GEO Slovenija** (15.–16. maj 2026), z dodelavo do **SLO4D** (9. junij 2026).
+Aplikacija je razvita za hackathon **GEO Slovenija** (15.–16. maj 2026), z dodelavo do **SLO4D** (9. junij 2026).
 
 ---
 
-## 🇸🇮 O aplikaciji
+## 🇸🇮 Zakaj 15min Slovenija
 
-15min Slovenija je odgovor na vprašanje: »Koliko od mojih dnevnih opravil lahko opravim peš ali s kolesom v 15 minutah?« Vsaka točka v Sloveniji je ocenjena od 0 do 8 — vsaka točka pomeni eno od osmih kategorij dnevnih dobrin (trgovina, izobraževanje, zdravstvo, park, javni promet, šport, storitve, delo). Ocena se izračuna iz dejanskih izokron za pešca in kolesarja, pridobljenih z lokalnim routing servisom Valhalla nad OSM cestnim omrežjem Slovenije.
+**Problem.** O »15-minutnih soseskah« in kakovosti življenja v slovenskih krajih se veliko piše in govori, vendar redko na konkretnih podatkih. Razprava ostaja teoretična: nikjer ni karte, ki bi pokazala, kje so dnevne potrebe v resnici blizu in kje daleč. Občine, investitorji in posamezniki tako odločitve o lokacijah, gradnji in selitvi sprejemajo bolj na občutek kot na karti, ki bi v resnici prikazala dnevno dosegljivost.
 
-### Funkcionalnosti vmesnika
+**Rešitev.** 15min Slovenija združi javno dostopne vire (OSM, GURS, ARSO, eProstor, CRP, Kontur) v en sam interaktiven zemljevid, ki je razumljiv tudi brez tehničnega znanja. Vsako polje (~66 m) je ocenjeno od 0 do 8 glede na to, koliko od osmih kategorij dnevnih dobrin (trgovina, izobraževanje, zdravstvo, park, javni promet, šport, storitve, delo) je iz njega dosegljivih v 15 minutah hoje ali kolesarjenja. Aplikacija ima dva pogleda — **potrošniški** (»kje bi mi bilo dobro živeti?«) in **investitorski** (»kje bi nova trgovina, vrtec ali ambulanta največ pomenili?«) — in **AI svetovalca**, ki vsakdanji opis življenjske situacije prevede v iskanje po zemljevidu.
 
-- **Iskalnik naslovov** *(zgoraj na sredini)* — Photon kot primarni geocoder, Nominatim kot rezerva. Najmanj 5 znakov, omejeno na Slovenijo. Klik na rezultat zapelje zemljevid in odpre Scorecard.
-- **Scorecard na klik celice** — 0–8 ocena, čas dosega po kategorijah, preklop hoja/kolo, prikaz 15-minutne izokrone v živo. Klik na vrstico kategorije izriše animirane poti do vsake dosegljive dobrine v barvi te kategorije, s svetlobnim učinkom na čelu poti.
-- **Preklop Hoja / Kolo** — celoten pogled (značka, čas dobrin, izokron, dobrine, aktivne poti) se preusmeri na pravi Valhalla profil (`pedestrian` 4 km/h vs `bicycle` 13 km/h, profil Hybrid).
-- **AI asistent** *(okrogel gumb spodaj desno)* — opišite življenjsko situacijo v slovenščini (»sva mlada družina, delava v Ljubljani in Mariboru«), LLM iz situacije izlušči zahtevane kategorije in ciljno mesto ter zemljevid zapelje na najboljše celice v okolici.
-- **Investitorski pogled** *(druga pilula zgoraj)* — namesto ocene dostopnosti prikaže zemljevid povpraševanja (`populacija × (1 − že pokrito)`). Stranska kolonska menija omogočata filter po kategoriji; viridis paleta s 4 stopnjami za barvno-slepe prijazno ločljivost in temno-vijoličastim »zanemarljivim« območjem za že polno pokrite celice. Nepoeljene predele (gozdovi, hribi, jezera) sintetiziramo iz občinskih poligonov na strani odjemalca.
-- **Svetla / temna tema** — preklop v levem spodnjem kotu ali znotraj »Izvor podatkov«. Zaradi vprašanja čitljivosti napisov v temni temi se ob vsakem nalaganju strani vmesnik vedno zažene v svetli temi.
-- **»Izvor podatkov«** — pregled vseh uporabljenih virov (OSM, GURS, ARSO, Kontur, OpenFreeMap), z licenco, številom enot in kratko razlago. Iz tega panela vodita povezavi na celovito REST API dokumentacijo (Swagger UI) in surov OpenAPI 3.1 JSON.
-- **REST API dokumentacija** (`/api-docs`) — Swagger UI s tabbed pogledom: »Združena dokumentacija« (ročno spisan OpenAPI 3.1, ki pokriva Next.js poti `/api/llm` in `/api/valhalla/{endpoint}` ter ključne Supabase tabele `cell_scores`, `obcine`, `amenities` in RPC funkciji `amenities_for_point` ter `llm_search_cells`) in »Supabase (živo)« (samodejno generiran PostgREST spec).
-- **Trajni linki** — vsak premik / zoom / klik zapiše `#lng/lat/z/h3` v URL. Z deljenjem linka prejemnik vidi natanko enak pogled.
+**Zakaj smo začeli.** Vsi podatki, ki so za tako analizo potrebni, so že javni — manjkala je le karta, ki bi jih sestavila v sliko, ki jo razume tudi nekdo, ki ne dela z GIS-orodji. Aplikacija je nastala kot konkretna podlaga za pogovor o tem, kje v Sloveniji se da kakovostno živeti brez avtomobila in kam bi se splačalo umestiti naslednjo storitev — bodisi za stanovalca, ki išče dom, bodisi za podjetje ali občino, ki išče lokacijo z največjim učinkom.
+
+---
+
+## ✨ Implementirane funkcionalnosti
+
+### Pogled zemljevida
+
+- **Dva pogleda zemljevida** *(preklop zgoraj na sredini)*:
+  - **Potrošnik** — vsako polje obarvano po 0–8 oceni dostopnosti (zelena 6–8 → rdeča 0–1).
+  - **Investitor** — vsako polje obarvano po nezadovoljenem povpraševanju `prebivalstvo × (1 − že pokrito) / št. celic`, da poudari predele s prebivalstvom, kjer dobrin še ni dovolj.
+- **Preklop hoja / kolo** *(spodaj desno)* — vsi izračuni (ocena, izokron, dosegljive dobrine, animirane poti) se preusmerijo na pravi Valhalla profil (`pedestrian` 4 km/h ali `bicycle` 13 km/h, profil Hybrid).
+- **Zoom-občutljiva agregacija** — pri oddaljenem pogledu se mreža zlije v občine; ob približanju se razrahlja v vse manjše H3 šesterokotnike (resolucija 6 → 10) brez dodatnega nalaganja. Spodnji prag samodejno preklopi na občinske poligone.
+- **Trajni linki** — vsak premik, zoom ali klik zapiše `#lng/lat/z/h3` v URL. Deljenje linka pripelje prejemnika na natanko isti pogled.
+
+### Iskanje in informacije o lokaciji
+
+- **Iskalnik naslovov** *(zgoraj na sredini)* — Photon kot primarni geocoder, Nominatim kot rezerva. Omejeno na slovenski bbox, najmanj 5 znakov; podpira tudi prilepljen `lat,lng`. Izbira rezultata zapelje zemljevid in odpre Scorecard.
+- **Scorecard celice** — ob kliku se na levi prikaže kartica z 0–8 oceno (barvni »badge«), časom dosega po vsaki kategoriji, razširljivim seznamom najbližjih dobrin (z imenom in časom v minutah) ter gumbom za prikaz 15-minutne izokrone v živo iz Valhalle.
+- **Animirane poti** — klik na vrstico kategorije v Scorecardu nariše časovno animirane poti do vseh dosegljivih dobrin v barvi te kategorije, s svetlobnim učinkom na čelu poti. Hitrost se prilagaja razdalji.
+- **Kartica občine** — pri oddaljenem pogledu klik na občino odpre kartico s povprečno oceno občine, prebivalstvom, gostoto in razčlenjenim deležem zadetih kategorij.
+
+### AI svetovalec
+
+- **Klepetalnik** *(okrogel gumb spodaj desno)* — odprt pogovor v slovenščini z LLM modelom (Vercel AI SDK + OpenRouter, `minimax/minimax-m2.7`). Iz opisa življenjske situacije (»sva mlada družina, delava v Ljubljani in Mariboru«) zgradi strukturirano poizvedbo (`SearchSpec`): zahtevane kategorije, ciljno mesto in uteži rangiranja.
+- **Kartica AI zadetkov** *(zgoraj desno)* — prikaže do 5 najboljših celic z rangiranjem, povzetkom uporabljenega filtra, oceno po kategorijah in gumbom za priblićanje. Pini ostanejo na zemljevidu, dokler kartica ni zaprta.
+- **Geokodiranje cilja** — če LLM razpozna ciljno mesto (npr. »blizu Ljubljane«), ga Photon prevede v koordinate, ki gredo neposredno v RPC `search_cells_v2` kot vir rangiranja po bližini.
+
+### Investitorski pogled
+
+- **Filter po kategoriji** *(leva stranska kolonska menija)* — preklop med osmimi kategorijami pokaže povpraševanje samo za izbrano dobrino (npr. »kje manjka vrtcev?«).
+- **Pred-izračunani predlogi gradnje** — pini na konkretnih parcelah, kjer bi nova storitev najbolj pomenila. Pini se obarvajo po demografskem profilu okolice: kategorija zdravstva poudari delež prebivalstva 65+, kategorija izobraževanja delež otrok 0–14.
+- **Izvzemanje neprimernih območij** — ARSO zavarovana območja in degradirana zemljišča (CRP) se na zemljevidu odštejejo, da priporočila padejo le na realno gradljive parcele iz eProstor.
+
+### Vidnost in nastavitve
+
+- **Svetla / temna tema** — gumb v levem spodnjem kotu. Zaradi čitljivosti napisov se aplikacija ob vsakem zagonu zažene v svetli temi.
+- **Zložljiva legenda** *(zgoraj desno)* — prilagojena trenutnemu pogledu (lestvica ocen 0–8 v potrošniškem, stopnje povpraševanja v investitorskem).
+- **Banner za nalaganje** in **opozorilo** za primer, ko strežnik ni dosegljiv (frontend tedaj prikaže vzorčne celice z jasnim obvestilom).
+
+### Preglednost podatkov in API
+
+- **Panel »Izvor podatkov«** — vsi viri (OSM, GURS, ARSO Zavarovana območja, Degradirana območja iz CRP, Predlogi za nove storitve iz eProstor, Kontur Population, OpenFreeMap) s številom enot, licencami, kratko utemeljitvijo in povezavo na izvirnik. Vključuje povezavo do celotne izvorne kode na GitHubu.
+- **Privacy badge** — »Naslov se ne hrani. Obdelava poteka v vašem brskalniku.« Iskanje po naslovu nikoli ne gre čez naš strežnik.
+- **REST API dokumentacija** *(`/api-docs`)* — Swagger UI s tabbed pogledom: ročno vzdrževan OpenAPI 3.1 (`/openapi.json`), ki pokriva Next.js poti (`/api/llm`, `/api/llm-search`, `/api/valhalla/{endpoint}`) in ključne Supabase poti (tabele `cell_scores`, `obcine`, `amenities`; RPC `amenities_for_point`, `llm_search_cells`, `search_cells_v2`), poleg žive Supabase PostgREST sheme za potrditev v živo.
 
 ### Arhitektura v eni sliki
 
 Dve fazi, namerno ločeni:
 
 1. **ETL / pred-izračun** *(Python, lokalno)* — OSM dobrine → 112 866 pedestrian izokron preko lokalnega Valhalla → prostorski sjoin s populiranimi Kontur celicami (res-10) → `cell_scores_lite.json` (`{h3, score}`) in `cell_population_lite.json` (`{h3, pop}`, agregirano na res-9). Oba fajla se priložita kot statične datoteke v `frontend/public/data/`.
-2. **Živo izvajanje** *(brskalnik)* — Next.js enkrat naloži obe JSON datoteki in nato `h3-js cellToParent` agregira po zoomu na strani odjemalca. Ni piramide tile-ov, ni round-tripa za spremembo resolucije. Edina prava »živa« infrastruktura je Valhalla za izokrone in poti ter Supabase za podrobnosti Scorecarda.
+2. **Živo izvajanje** *(brskalnik)* — Next.js enkrat naloži obe JSON datoteki in nato `h3-js cellToParent` agregira po zoomu na strani odjemalca. Ni piramide tile-ov, ni round-tripa za spremembo resolucije. Edina prava »živa« infrastruktura je Valhalla za izokrone in poti, Supabase za podrobnosti Scorecarda in OpenRouter za AI iskanje.
 
 ---
 
