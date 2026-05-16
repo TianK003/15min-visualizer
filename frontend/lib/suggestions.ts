@@ -62,6 +62,8 @@ export const ZONE_LABELS: Record<string, string> = {
   PI: "Industrijska cona",
 };
 
+export type BoostKind = "elderly" | "kids";
+
 export type Suggestion = {
   categoryIndex: number;
   lat: number;
@@ -71,6 +73,11 @@ export type Suggestion = {
   distanceM: number;
   source: "fro" | "opn";
   members?: number;
+  // When set, this pin sits in an občina whose relevant demographic exceeds
+  // the threshold defined in Map.tsx for its category — "elderly" boost for
+  // Zdravstvo (cat 2) and "kids" boost for Izobraževanje (cat 1). Drives the
+  // blue paint and the appropriate explanation line in the pin tooltip.
+  boostKind?: BoostKind;
 };
 
 // Ray-casting point-in-polygon (GeoJSON coords are [lng, lat]).

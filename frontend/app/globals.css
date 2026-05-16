@@ -215,6 +215,7 @@ button { font-family: inherit; }
   gap: 10px;
 }
 .address-search {
+  position: relative;
   width: min(440px, calc(100vw - 420px));
   min-width: 240px;
 }
@@ -246,6 +247,13 @@ button { font-family: inherit; }
   box-shadow: 0 0 0 3px var(--accent-soft), var(--shadow-md);
 }
 .address-dropdown {
+  /* Float over the map without contributing to the .address-search wrapper's
+     height — otherwise .top-row's `align-items: center` re-centers the
+     adjacent view-switch downward as the suggestion list grows. */
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
   margin-top: 6px;
   background: var(--surface-glass-strong);
   backdrop-filter: var(--blur);

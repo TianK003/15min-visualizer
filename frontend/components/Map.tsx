@@ -17,7 +17,7 @@ import ThemeToggle from "@/components/ThemeToggle";
 import { categoryById, CATEGORIES, ICON_HOME } from "@/lib/categories";
 import type { AmenityForPoint } from "@/lib/supabase";
 import { useTheme } from "@/lib/theme";
-import { ZONE_REASONS, type Suggestion } from "@/lib/suggestions";
+import { ZONE_REASONS, type Suggestion, type BoostKind } from "@/lib/suggestions";
 import { pointInFeature } from "@/lib/geo";
 
 type GroupedPin = {
@@ -26,6 +26,10 @@ type GroupedPin = {
   zoneCode: string;
   zoneDesc: string;
   items: Suggestion[];
+  // All items in a group share lat/lng → same občina → same kind. Hoisted to
+  // the group level so the ScatterplotLayer's getFillColor doesn't have to
+  // peek into items[0] for every paint.
+  boostKind?: BoostKind;
 };
 
 // Path color is derived per-render from the active category (see layers effect).
@@ -171,6 +175,28 @@ const DEMAND_URL = REMOTE_DATA
 const PROTECTED_URL = REMOTE_DATA
   ? `${STORAGE}/overlays/zavarovana_si.geojson`
   : "/data/zavarovana_si.geojson";
+// Always served locally — pairs with `building_suggestions.json` (also
+// fetched from /data/ regardless of REMOTE_DATA) and the file is tiny
+// (~8 KB), so there's no reason to round-trip through Supabase Storage.
+const DEMOGRAPHICS_URL = "/data/obcine_demographics.json";
+
+// Suggestion pins located in an občina whose relevant demographic exceeds
+// the threshold below are painted blue (instead of red FRO / yellow OPN)
+// and their tooltip explains the boost. Thresholds are fractions of total
+// population (e.g. 0.25 = 25 %). Set a threshold to 1.0 to disable that
+// category's boost entirely.
+//
+//   Zdravstvo  → boosted in elderly-heavy občine (65+ share above threshold)
+//   Izobraževanje → boosted in kid-heavy občine (0-14 share above threshold)
+//
+// National ranges: el65 ≈ 0.16-0.39 (mean 0.23), kids ≈ 0.06-0.20 (mean 0.14).
+const ELDERLY_THRESHOLD_ZDRAVSTVO = 0.25;
+const KIDS_THRESHOLD_IZOBRAZEVANJE = 0.17;
+const ZDRAVSTVO_CAT_INDEX = 2;
+const IZOBRAZEVANJE_CAT_INDEX = 1;
+// Blue used for any boosted pin (regardless of boost kind). Reads clearly
+// on both the yellow demand heatmap and the dark basemap.
+const BOOST_COLOR: [number, number, number, number] = [37, 99, 235, 230];
 
 const SLOVENIA_CENTER: [number, number] = [14.99, 46.15];
 const INITIAL_ZOOM = 7.5;
@@ -444,8 +470,16 @@ export default function SloveniaMap() {
   const [investorCat, setInvestorCat] = useState<number | null>(null);
   const [suggestionPins, setSuggestionPins] = useState<Suggestion[]>([]);
   const [buildingSuggestions, setBuildingSuggestions] = useState<
-    Record<string, { lat: number; lng: number; source: string; demand: number; members: number }[]>
+    Record<string, { lat: number; lng: number; source: string; demand: number; members: number; s?: number }[]>
   >({});
+  // Sifra → {el65, kids}. Loaded lazily on first switch into investor view.
+  // Used to mark category-2 (Zdravstvo) and category-1 (Izobraževanje) pins
+  // whose občina exceeds the corresponding threshold. Empty Map until the
+  // fetch resolves; in that window no pins are marked, which gracefully
+  // degrades to the pre-feature behavior.
+  const [demographicsBySifra, setDemographicsBySifra] = useState<
+    Map<number, { el65: number; kids: number }>
+  >(new Map());
 
   // Fetch real scores; fall back to dummy if not yet baked.
   useEffect(() => {
@@ -922,8 +956,21 @@ export default function SloveniaMap() {
       if (s.source === "opn" && inProtected(s.lng, s.lat)) continue;
       const key = `${s.lat.toFixed(5)},${s.lng.toFixed(5)}`;
       const existing = map.get(key);
-      if (existing) existing.items.push(s);
-      else map.set(key, { lat: s.lat, lng: s.lng, zoneCode: s.zoneCode, zoneDesc: s.zoneDesc, items: [s] });
+      if (existing) {
+        existing.items.push(s);
+        // All items in a group share lat/lng → same občina → same kind, so
+        // the first item's value already represents the group.
+        if (!existing.boostKind && s.boostKind) existing.boostKind = s.boostKind;
+      } else {
+        map.set(key, {
+          lat: s.lat,
+          lng: s.lng,
+          zoneCode: s.zoneCode,
+          zoneDesc: s.zoneDesc,
+          items: [s],
+          boostKind: s.boostKind,
+        });
+      }
     }
     return Array.from(map.values());
   }, [suggestionPins, protectedFC]);
@@ -1055,7 +1102,27 @@ export default function SloveniaMap() {
       .catch((err) => console.warn("building_suggestions fetch failed:", err));
   }, [view, buildingSuggestions]);
 
+  // Lazy-load per-občina demographics (sifra → {el65, kids}). Used to mark
+  // boost-eligible pins; fetch is unconditional in investor view so toggling
+  // categories doesn't introduce a load delay on the second open.
+  useEffect(() => {
+    if (view !== "investor" || demographicsBySifra.size > 0) return;
+    fetch(DEMOGRAPHICS_URL)
+      .then((r) => r.json())
+      .then((raw: Record<string, { el65: number; kids: number; name?: string }>) => {
+        const m = new Map<number, { el65: number; kids: number }>();
+        for (const [sifra, v] of Object.entries(raw)) {
+          m.set(Number(sifra), { el65: v.el65 ?? 0, kids: v.kids ?? 0 });
+        }
+        setDemographicsBySifra(m);
+      })
+      .catch((err) => console.warn("obcine_demographics fetch failed:", err));
+  }, [view, demographicsBySifra]);
+
   // Show pins for the active category filter — instant, no network calls.
+  // For Zdravstvo and Izobraževanje, attach `boostKind` to pins whose občina
+  // crosses the matching threshold; the ScatterplotLayer + tooltip key off
+  // this flag to paint blue and explain the marking.
   useEffect(() => {
     if (view !== "investor" || investorCat === null) {
       setSuggestionPins([]);
@@ -1063,18 +1130,36 @@ export default function SloveniaMap() {
     }
     const raw = buildingSuggestions[String(investorCat)] ?? [];
     setSuggestionPins(
-      raw.map((s) => ({
-        categoryIndex: investorCat,
-        lat: s.lat,
-        lng: s.lng,
-        zoneCode: s.source === "fro" ? "FRO" : "OPN",
-        zoneDesc: s.source === "fro" ? "Degradirano območje" : "Predlagana lokacija",
-        distanceM: s.demand,   // repurpose field to carry demand for tooltip
-        source: (s.source === "fro" ? "fro" : "opn") as "fro" | "opn",
-        members: s.members,
-      })),
+      raw.map((s) => {
+        const demo = s.s !== undefined ? demographicsBySifra.get(s.s) : undefined;
+        let boostKind: BoostKind | undefined;
+        if (demo) {
+          if (
+            investorCat === ZDRAVSTVO_CAT_INDEX &&
+            demo.el65 > ELDERLY_THRESHOLD_ZDRAVSTVO
+          ) {
+            boostKind = "elderly";
+          } else if (
+            investorCat === IZOBRAZEVANJE_CAT_INDEX &&
+            demo.kids > KIDS_THRESHOLD_IZOBRAZEVANJE
+          ) {
+            boostKind = "kids";
+          }
+        }
+        return {
+          categoryIndex: investorCat,
+          lat: s.lat,
+          lng: s.lng,
+          zoneCode: s.source === "fro" ? "FRO" : "OPN",
+          zoneDesc: s.source === "fro" ? "Degradirano območje" : "Predlagana lokacija",
+          distanceM: s.demand,   // repurpose field to carry demand for tooltip
+          source: (s.source === "fro" ? "fro" : "opn") as "fro" | "opn",
+          members: s.members,
+          boostKind,
+        };
+      }),
     );
-  }, [view, investorCat, buildingSuggestions]);
+  }, [view, investorCat, buildingSuggestions, demographicsBySifra]);
 
   useEffect(() => {
     const overlay = overlayRef.current;
@@ -1515,7 +1600,12 @@ export default function SloveniaMap() {
           },
           radiusUnits: "pixels",
           radiusMinPixels: 3,
-          getFillColor: (d) => d.items[0]?.source === "fro" ? [239, 68, 68, 200] : [250, 204, 21, 200],
+          getFillColor: (d) =>
+            d.boostKind
+              ? BOOST_COLOR
+              : d.items[0]?.source === "fro"
+                ? [239, 68, 68, 200]
+                : [250, 204, 21, 200],
           getLineColor: [255, 255, 255, 200],
           lineWidthMinPixels: 1,
           stroked: true,
@@ -1550,11 +1640,25 @@ export default function SloveniaMap() {
         </div>
       </div>`;
     }).join("");
+    let boostNote = "";
+    if (pin.boostKind === "elderly") {
+      boostNote = `<div style="margin-top:6px;padding:6px 8px;background:#eff6ff;border-left:3px solid #2563eb;border-radius:4px;font-size:11px;color:#1e3a8a;line-height:1.4">
+          <strong>Spodbujeno z deležem starejših.</strong> Občina presega prag
+          ${(ELDERLY_THRESHOLD_ZDRAVSTVO * 100).toFixed(0)} % prebivalcev starih 65+,
+          zato je tu posebej smiselno umestiti zdravstvene objekte.
+        </div>`;
+    } else if (pin.boostKind === "kids") {
+      boostNote = `<div style="margin-top:6px;padding:6px 8px;background:#eff6ff;border-left:3px solid #2563eb;border-radius:4px;font-size:11px;color:#1e3a8a;line-height:1.4">
+          <strong>Spodbujeno z deležem otrok.</strong> Občina presega prag
+          ${(KIDS_THRESHOLD_IZOBRAZEVANJE * 100).toFixed(0)} % prebivalcev starih 0–14 let,
+          zato je tu posebej smiselno umestiti šole in vrtce.
+        </div>`;
+    }
     return {
-      html: `<div style="max-width:240px">
+      html: `<div style="max-width:260px">
         <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:#999;margin-bottom:4px">
           ${pin.items[0]?.source === "fro" ? "🔴 Degradirano območje · Predlagana revitalizacija" : `OPN cona ${pin.zoneCode} · Predlagana gradnja`}
-        </div>${rows}</div>`,
+        </div>${rows}${boostNote}</div>`,
       style: {
         background: "white", padding: "10px 12px", borderRadius: "10px",
         boxShadow: "0 4px 16px rgba(0,0,0,0.15)", border: "1px solid rgba(0,0,0,0.06)",
