@@ -2,11 +2,11 @@
 
 > **Team GEOGuessr** · Built at [GEO Slovenija](https://www.geo-slovenija.si) Hackathon (May 15–16, 2026)
 
-The "15-minute city" concept promises that every resident can reach daily essentials — groceries, healthcare, schools, transit, parks — within a 15-minute walk. But nobody had measured this for an entire country, at house-block resolution, using real road-network routing. Until now.
+The "15-minute city" concept promises that every resident can reach daily essentials - groceries, healthcare, schools, transit, parks - within a 15-minute walk. But nobody had measured this for an entire country, at house-block resolution, using real road-network routing. Until now.
 
 15min Slovenija scores **every populated point in Slovenia** from 0 to 8 across eight daily-needs categories, using real walking and cycling isochrones computed over the entire OpenStreetMap road graph. The result: a single interactive map that answers "How livable is this exact spot?" for 1.08 million H3 hexagonal cells at ~66 m resolution.
 
-We processed **37,622 amenities × 3 isochrone contours = 112,866 walking polygons** via a local Valhalla routing engine in under 2 minutes, then spatial-joined them against the Kontur population grid to produce a per-cell livability score — all during a 24-hour hackathon. The precomputed dataset ships as a single ~3 MB gzipped JSON; the browser aggregates it client-side across zoom levels via `h3-js cellToParent` with zero server roundtrips.
+We processed **37,622 amenities × 3 isochrone contours = 112,866 walking polygons** via a local Valhalla routing engine in under 2 minutes, then spatial-joined them against the Kontur population grid to produce a per-cell livability score - all during a 24-hour hackathon. The precomputed dataset ships as a single ~3 MB gzipped JSON; the browser aggregates it client-side across zoom levels via `h3-js cellToParent` with zero server roundtrips.
 
 Our demo shows:
 - **Ljubljana center** → 8/8 (all daily needs within 15 min walk)
@@ -14,9 +14,9 @@ Our demo shows:
 - **Alpine village in Bohinj** → 1/8 (only a bus stop nearby)
 - **Investor mode** → flips the map to show unmet demand: `population × (1 − already_served)`, revealing exactly where new facilities would have the most impact
 
-The platform includes an **AI-powered natural-language search** (OpenRouter LLM): describe your life situation in Slovenian — *"sva mlada družina, delava v Ljubljani"* — and the system extracts required categories, finds the best-scoring cells near your target city, and flies the map there. Built on Supabase Postgres + PostGIS with auto-generated REST APIs, live Swagger UI documentation, and full data provenance for every layer.
+The platform includes an **AI-powered natural-language search** (OpenRouter LLM): describe your life situation in Slovenian - *"sva mlada družina, delava v Ljubljani"* - and the system extracts required categories, finds the best-scoring cells near your target city, and flies the map there. Built on Supabase Postgres + PostGIS with auto-generated REST APIs, live Swagger UI documentation, and full data provenance for every layer.
 
-This isn't a mockup. Every hexagon is backed by real isochrone geometry, real population data, and real amenity locations — fully reproducible from open data.
+This isn't a mockup. Every hexagon is backed by real isochrone geometry, real population data, and real amenity locations - fully reproducible from open data.
 
 ---
 
@@ -43,28 +43,28 @@ This isn't a mockup. Every hexagon is backed by real isochrone geometry, real po
 ## Features
 
 ### Citizen View ("Potrošnik")
-- **Address search** — Photon (primary) + Nominatim (fallback) geocoder, scoped to Slovenia
-- **Scorecard** — click any hexagonal cell to see its 0–8 livability score with per-category breakdown and travel times
-- **Amenity pins** — category-colored markers for every reachable amenity, with walking/cycling time badges
-- **Live isochrone overlay** — real-time 15-minute walking/cycling polygon via Valhalla, rendered as a translucent overlay
-- **Walk / Bike toggle** — switches the entire view (score, travel times, isochrone, route animations) between pedestrian and bicycle profiles
-- **Animated route paths** — click a scorecard category row to see animated paths to every reachable amenity in that category, with a glow effect at the path head
+- **Address search** - Photon (primary) + Nominatim (fallback) geocoder, scoped to Slovenia
+- **Scorecard** - click any hexagonal cell to see its 0–8 livability score with per-category breakdown and travel times
+- **Amenity pins** - category-colored markers for every reachable amenity, with walking/cycling time badges
+- **Live isochrone overlay** - real-time 15-minute walking/cycling polygon via Valhalla, rendered as a translucent overlay
+- **Walk / Bike toggle** - switches the entire view (score, travel times, isochrone, route animations) between pedestrian and bicycle profiles
+- **Animated route paths** - click a scorecard category row to see animated paths to every reachable amenity in that category, with a glow effect at the path head
 
 ### Investor View ("Investitor")
-- **Demand heatmap** — `population × (1 − category_satisfied)` reveals underserved areas
-- **Category filter pills** — filter by any of 8 categories to find specific gaps (e.g., "Where do people need a pharmacy?")
-- **Facility suggestion pins** — pre-computed optimal placement suggestions with rationale tooltips
-- **Unpopulated masking** — forests, mountains, and lakes synthesized client-side from municipality polygons
-- **Color-blind-safe palette** — 4-step viridis with dark-purple "negligible" zone for fully served cells
+- **Demand heatmap** - `population × (1 − category_satisfied)` reveals underserved areas
+- **Category filter pills** - filter by any of 8 categories to find specific gaps (e.g., "Where do people need a pharmacy?")
+- **Facility suggestion pins** - pre-computed optimal placement suggestions with rationale tooltips
+- **Unpopulated masking** - forests, mountains, and lakes synthesized client-side from municipality polygons
+- **Color-blind-safe palette** - 4-step viridis with dark-purple "negligible" zone for fully served cells
 
 ### Cross-Cutting
-- **Client-side multi-scale aggregation** — 1.08M cells at res-10, aggregated to ~450 hexes at country zoom via `h3.cellToParent()` in <5 ms
-- **Municipality choropleth** — low-zoom view colors 212 občine by mean score with population stats on hover
-- **Light / dark theme** — toggle in the bottom-left corner
-- **Permalink URLs** — every map state (`#lng/lat/zoom/h3`) is encoded in the URL for sharing
-- **AI assistant** — natural-language search powered by OpenRouter LLM
-- **Data provenance panel** ("Izvor podatkov") — every dataset listed with source, license, count, and explanation
-- **REST API + Swagger UI** — auto-generated OpenAPI docs at `/api-docs`
+- **Client-side multi-scale aggregation** - 1.08M cells at res-10, aggregated to ~450 hexes at country zoom via `h3.cellToParent()` in <5 ms
+- **Municipality choropleth** - low-zoom view colors 212 občine by mean score with population stats on hover
+- **Light / dark theme** - toggle in the bottom-left corner
+- **Permalink URLs** - every map state (`#lng/lat/zoom/h3`) is encoded in the URL for sharing
+- **AI assistant** - natural-language search powered by OpenRouter LLM
+- **Data provenance panel** ("Izvor podatkov") - every dataset listed with source, license, count, and explanation
+- **REST API + Swagger UI** - auto-generated OpenAPI docs at `/api-docs`
 
 ---
 
@@ -102,7 +102,7 @@ flowchart TB
 
 **Phase 1 (ETL):** Extract amenities from OSM → compute 112,866 isochrones via Valhalla → spatial-join against 1.08M populated H3 cells → export scores as static JSON + upload to Supabase.
 
-**Phase 2 (Runtime):** Next.js loads the score JSON once on page load. All zoom-level changes are handled client-side via `h3.cellToParent()` aggregation — no tile server, no resolution-change roundtrips. The only live infrastructure is Valhalla (for on-click isochrones) and Supabase (for scorecard details and amenity pins).
+**Phase 2 (Runtime):** Next.js loads the score JSON once on page load. All zoom-level changes are handled client-side via `h3.cellToParent()` aggregation - no tile server, no resolution-change roundtrips. The only live infrastructure is Valhalla (for on-click isochrones) and Supabase (for scorecard details and amenity pins).
 
 ---
 
@@ -291,7 +291,7 @@ cd 15min-visualizer
 
 #### 5. Download raw data
 
-Follow [`data/DATA_SOURCES.md`](./data/DATA_SOURCES.md) — each source has a single `curl` command. Expected files:
+Follow [`data/DATA_SOURCES.md`](./data/DATA_SOURCES.md) - each source has a single `curl` command. Expected files:
 
 ```
 data/15min-slo/slovenia-latest.osm.pbf
@@ -333,7 +333,7 @@ NEXT_PUBLIC_USE_REMOTE_DATA=true
 VALHALLA_URL=http://127.0.0.1:8002
 ```
 
-The `/sb` proxy value is intentional — `next.config.mjs` rewrites `/sb/*` requests to `SUPABASE_INTERNAL_URL`, keeping all browser requests same-origin and avoiding WSL2 port-forwarding issues.
+The `/sb` proxy value is intentional - `next.config.mjs` rewrites `/sb/*` requests to `SUPABASE_INTERNAL_URL`, keeping all browser requests same-origin and avoiding WSL2 port-forwarding issues.
 
 #### 9. Start Supabase
 
@@ -371,13 +371,13 @@ curl -X POST http://localhost:8002/isochrone \
 ```bash
 cd backend
 source .venv/bin/activate
-python etl/01_extract_amenities.py     # ~30 s — OSM → 37,622 amenities
-python etl/02_isochrones.py            # ~1.3 min — 112,866 isochrones (resumable)
-python etl/03_score_cells.py           # ~30 s — 1,079,666 H3 cells scored
-python etl/05_export_population.py     # ~10 s — population sidecar JSON
-python etl/07_bin_cells_to_tiles.py    # ~5 s — partial-load shards
-python etl/08_flag_unbuildable.py      # ~20 s — mark protected-area cells
-python etl/06_upload_to_supabase.py    # ~30 s — upload all data to local Supabase
+python etl/01_extract_amenities.py     # ~30 s - OSM → 37,622 amenities
+python etl/02_isochrones.py            # ~1.3 min - 112,866 isochrones (resumable)
+python etl/03_score_cells.py           # ~30 s - 1,079,666 H3 cells scored
+python etl/05_export_population.py     # ~10 s - population sidecar JSON
+python etl/07_bin_cells_to_tiles.py    # ~5 s - partial-load shards
+python etl/08_flag_unbuildable.py      # ~20 s - mark protected-area cells
+python etl/06_upload_to_supabase.py    # ~30 s - upload all data to local Supabase
 cd ..
 ```
 
@@ -450,8 +450,8 @@ The application exposes a REST API auto-generated by Supabase PostgREST, plus cu
 ### Swagger UI
 
 When the dev server is running, visit [`/api-docs`](http://localhost:3000/api-docs) for interactive API documentation with two tabs:
-- **Combined Documentation** — hand-written OpenAPI 3.1 covering Next.js routes and key Supabase tables
-- **Supabase (Live)** — auto-generated PostgREST spec
+- **Combined Documentation** - hand-written OpenAPI 3.1 covering Next.js routes and key Supabase tables
+- **Supabase (Live)** - auto-generated PostgREST spec
 
 Raw OpenAPI JSON is available at [`/openapi.json`](http://localhost:3000/openapi.json).
 
@@ -508,11 +508,11 @@ pnpm lint         # ESLint
 | "Failed to fetch" in browser | WSL2 doesn't forward port 54321. Use `NEXT_PUBLIC_SUPABASE_URL=/sb` (not a raw URL) in `.env.local` |
 | Yellow "sample data" banner | Supabase not running or data not uploaded. Run `supabase status` then `06_upload_to_supabase.py` |
 | Scorecard stuck on loading | Check devtools → Network for 401 (key mismatch in `.env.local`) or 404 (ETL upload not run) |
-| Valhalla returns 405 in browser | Expected — the app calls Valhalla via `/api/valhalla/*` server proxy, not directly |
+| Valhalla returns 405 in browser | Expected - the app calls Valhalla via `/api/valhalla/*` server proxy, not directly |
 | Photon returns 400 | Known issue: `&lang=sl` is unsupported. The codebase already omits it |
 | `/api/llm` returns 501 | `OPENROUTER_API_KEY` not set in `.env.local` |
 | Slow file-watch / `EBUSY` | Repo is on `/mnt/c/...`. Move it to the WSL filesystem (`~/`) |
-| `supabase start` hangs on pulling | Docker Desktop just woke up — wait a minute, or manually `docker pull` the image |
+| `supabase start` hangs on pulling | Docker Desktop just woke up - wait a minute, or manually `docker pull` the image |
 | ETL `08_flag_unbuildable.py` fails | Migrations not applied. Run `supabase db reset --local` |
 
 ---
