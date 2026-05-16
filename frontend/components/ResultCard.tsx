@@ -1,13 +1,14 @@
 // frontend/components/ResultCard.tsx
 //
-// Top-right floating card. Self-contained state machine:
+// Bottom-right collapsed FAB → expands into a floating card on click. Self-
+// contained state machine:
 //   idle → submitting → results (loaded) → idle (reset)
 //   submitting → error → idle (reset)
 // Calls /api/llm-search. Emits row events upward for Map.tsx to render pins.
 
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { SearchResult, SearchResponse } from "@/lib/llm-search";
 
 type Props = {
@@ -30,10 +31,23 @@ type View =
   | { kind: "error"; query: string; message: string };
 
 export default function ResultCard({ onResultsChange, onZoomToResult, onRowHover, highlightH3 }: Props) {
+  const [open, setOpen] = useState(false);
   const [input, setInput] = useState("");
   const [view, setView] = useState<View>({ kind: "idle" });
   const [expanded, setExpanded] = useState<string | null>(null);  // h3 of expanded row
+  const [patience, setPatience] = useState(false);  // 10-second "still working" flag
   const abortRef = useRef<AbortController | null>(null);
+
+  // Trigger patience message 10 s after a submit starts. Cleared on any state
+  // transition out of "submitting".
+  useEffect(() => {
+    if (view.kind !== "submitting") {
+      setPatience(false);
+      return;
+    }
+    const id = setTimeout(() => setPatience(true), 10_000);
+    return () => clearTimeout(id);
+  }, [view.kind]);
 
   const submit = async () => {
     const q = input.trim();
@@ -76,13 +90,42 @@ export default function ResultCard({ onResultsChange, onZoomToResult, onRowHover
     onResultsChange([]);
   };
 
+  // Collapsed: small floating button just above the Hoja/Kolo switch.
+  if (!open) {
+    return (
+      <button
+        type="button"
+        className="ai-card-fab"
+        onClick={() => setOpen(true)}
+        aria-label="Odpri AI svetovalca"
+        title="AI svetovalec"
+      >
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden
+        >
+          <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
+        </svg>
+      </button>
+    );
+  }
+
   return (
     <div className="ai-card">
       <div className="ai-card-header">
-        <span className="ai-card-title">✨ AI svetovalec</span>
-        {view.kind !== "idle" && (
-          <button className="ai-card-close" onClick={reset} aria-label="Zapri">×</button>
-        )}
+        <span className="ai-card-title">AI svetovalec</span>
+        <button
+          className="ai-card-close"
+          onClick={() => { reset(); setOpen(false); }}
+          aria-label="Zapri"
+        >
+          ×
+        </button>
       </div>
 
       <form
@@ -109,6 +152,7 @@ export default function ResultCard({ onResultsChange, onZoomToResult, onRowHover
 
       <ResultBody
         view={view}
+        patience={patience}
         expanded={expanded}
         setExpanded={setExpanded}
         onZoomToResult={onZoomToResult}
@@ -120,9 +164,10 @@ export default function ResultCard({ onResultsChange, onZoomToResult, onRowHover
 }
 
 function ResultBody({
-  view, expanded, setExpanded, onZoomToResult, onRowHover, highlightH3,
+  view, patience, expanded, setExpanded, onZoomToResult, onRowHover, highlightH3,
 }: {
   view: View;
+  patience: boolean;
   expanded: string | null;
   setExpanded: (h3: string | null) => void;
   onZoomToResult: (r: SearchResult) => void;
@@ -133,7 +178,14 @@ function ResultBody({
     return <div className="ai-card-empty">Vpiši opis tvoje situacije.</div>;
   }
   if (view.kind === "submitting") {
-    return <div className="ai-card-loading">Iščem… ✨</div>;
+    return (
+      <div className="ai-card-loading">
+        <div>Iščem…</div>
+        {patience && (
+          <div className="ai-card-patience">Še vedno se trudim, hvala za potrpežljivost</div>
+        )}
+      </div>
+    );
   }
   if (view.kind === "error") {
     return <div className="ai-card-error">{view.message}</div>;
@@ -221,7 +273,7 @@ function ResultRowDetail({ r, onZoom }: { r: SearchResult; onZoom: () => void })
           {r.kids !== null && <>0–14: {(r.kids * 100).toFixed(1)}%</>}
         </div>
       )}
-      <button className="ai-card-zoom" onClick={onZoom}>📍 Pokaži na zemljevidu</button>
+      <button className="ai-card-zoom" onClick={onZoom}>Pokaži na zemljevidu</button>
     </div>
   );
 }
