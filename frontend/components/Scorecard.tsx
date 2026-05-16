@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import * as h3 from "h3-js";
 import { cellScore, amenitiesForPoint, type CellScoreRow, type AmenityForPoint } from "@/lib/supabase";
-import { isochrone, route } from "@/lib/valhalla";
+import { isochrone, route, timeMatrix } from "@/lib/valhalla";
 import { CATEGORIES, type CategoryId } from "@/lib/categories";
 import { decodePolyline } from "@/lib/polyline";
 import { pointInFeature } from "@/lib/geo";
@@ -27,6 +27,9 @@ type Props = {
    *  search) the iso/amenity/route fetches use this exact point instead of
    *  the H3 cell centroid. The score itself remains a cell property. */
   originLngLat?: [number, number] | null;
+  /** Name of the občina the selected hex falls in. Computed in Map.tsx via
+   *  point-in-polygon against the cached obcine FeatureCollection. */
+  obcinaName?: string | null;
   onClose: () => void;
   onIsochrone: (poly: GeoJSON.Feature | null) => void;
   onRoute: (set: RouteSet | null) => void;
@@ -46,7 +49,7 @@ const MAX_PATHS_PER_CATEGORY = 25;
 // visually says is reachable.
 
 export default function Scorecard({
-  h3id, mode, originLngLat, onClose, onIsochrone, onRoute, onAmenities,
+  h3id, mode, originLngLat, obcinaName, onClose, onIsochrone, onRoute, onAmenities,
 }: Props) {
   const [cell, setCell] = useState<CellScoreRow | null>(null);
   const [amenities, setAmenities] = useState<AmenityByMode>(EMPTY_AMENITIES);
@@ -96,9 +99,40 @@ export default function Scorecard({
           isochrone({ lat, lng, minutes: 15, costing: "pedestrian" }).catch(() => null),
           isochrone({ lat, lng, minutes: 15, costing: "bicycle" }).catch(() => null),
         ]);
+
+        // Refine each amenity's `walk_min` (which comes back from the RPC as
+        // a 5/10/15-min step — see migration `amenities_for_point_mode.sql`)
+        // with a precise Valhalla time via one /sources_to_targets call per
+        // mode. Falls back silently to the original step values on failure.
+        const refine = async (
+          set: AmenityForPoint[],
+          mode: "pedestrian" | "bicycle",
+        ): Promise<AmenityForPoint[]> => {
+          if (set.length === 0) return set;
+          try {
+            const mins = await timeMatrix(
+              { lat, lng },
+              set.map((a) => ({ lat: a.lat, lng: a.lng })),
+              mode,
+            );
+            if (mins.length !== set.length) return set;
+            return set.map((a, i) =>
+              mins[i] !== null && Number.isFinite(mins[i]!)
+                ? { ...a, walk_min: mins[i]! }
+                : a,
+            );
+          } catch {
+            return set;
+          }
+        };
+        const [walkAmFine, bikeAmFine] = await Promise.all([
+          refine(walkAm, "pedestrian"),
+          refine(bikeAm, "bicycle"),
+        ]);
+
         if (!cancelled) {
           setCell(c);
-          setAmenities({ walk: walkAm, bike: bikeAm });
+          setAmenities({ walk: walkAmFine, bike: bikeAmFine });
           setIsos({ walk: walkIso, bike: bikeIso });
           setIsoFetched(true);
         }
@@ -138,6 +172,21 @@ export default function Scorecard({
     const t = setTimeout(() => setError(null), 3000);
     return () => clearTimeout(t);
   }, [error]);
+
+  // Pick the shortest Valhalla-estimated travel time across all amenities in
+  // a single category. Returns `null` when the category has no reachable
+  // amenity in this mode — that's how the row decides between ✓/—. Clamps to
+  // [1, 15] so the row never reads "0 min" (for an amenity right at the
+  // origin) or breaks the 15-min city framing of the project.
+  const bestTimeFor = (set: AmenityForPoint[], catId: string): number | null => {
+    let best = Infinity;
+    for (const a of set) {
+      if (a.category !== catId) continue;
+      if (a.walk_min < best) best = a.walk_min;
+    }
+    if (!Number.isFinite(best)) return null;
+    return Math.max(1, Math.min(15, Math.round(best)));
+  };
 
   // Filter both amenity sets to the user-centered iso polygon so the dots,
   // the <details> list, and the routes drawn on category-click stay in sync
@@ -262,7 +311,7 @@ export default function Scorecard({
 
   if (!h3id) return null;
 
-  const isoLabel = mode === "bike" ? "(15 min kolesa)" : "(15 min hoje)";
+  const isoLabel = mode === "bike" ? "(15 min kolesarjenja)" : "(15 min hoje)";
   const buttonText = isoLoading
     ? "Računam …"
     : isoVisible
@@ -285,11 +334,11 @@ export default function Scorecard({
               <span className="of">/8</span>
             </div>
             <div className="scorecard-sub">
-              {mode === "bike" ? "15-min skor (kolo)" : "15-min skor (hoja)"}
+              {obcinaName ?? "Občina ni znana"}
               {cell.population != null && (
                 <>
                   <br />
-                  {Math.round(cell.population * 100) / 100} prebivalcev
+                  {Math.floor(cell.population).toLocaleString("sl-SI")} prebivalcev
                 </>
               )}
             </div>
@@ -297,8 +346,22 @@ export default function Scorecard({
 
           <div className="scorecard-rows">
             {CATEGORIES.map((c, i) => {
-              const walkVal = cell.walk_min[i];
-              const bikeVal = cell.bike_min[i];
+              // Per-row time uses the live Valhalla matrix (1-min accuracy)
+              // when available, falling back to the bake's 5/10/15-min step.
+              // Why the fallback: the bake's `cell.walk_min[i]` is what
+              // drives the hex's headline score (0–8). Its classification
+              // comes from "is the cell centroid inside the amenity's 15-min
+              // iso polygon?" — a polygon approximation that can include
+              // points whose actual matrix time is 15.5–16 min. Without the
+              // fallback, the row says "—" for any such category, even when
+              // the hex score counted it as reachable → confusing mismatch
+              // ("score 8 / 8 but row says not reachable"). Keeping the
+              // bake authoritative for reachability makes the row read
+              // consistent with the colored score.
+              const walkPrecise = bestTimeFor(visibleAmenities.walk, c.id);
+              const bikePrecise = bestTimeFor(visibleAmenities.bike, c.id);
+              const walkVal = walkPrecise ?? cell.walk_min[i] ?? null;
+              const bikeVal = bikePrecise ?? cell.bike_min[i] ?? null;
               const val = mode === "walk" ? walkVal : bikeVal;
               const reachable = val !== null;
               const isActive = activeCat === c.id;
@@ -355,7 +418,7 @@ export default function Scorecard({
                           {namedAmenities.map((a) => (
                             <li key={a.amenity_id}>
                               <span className="cat-amenity-name">{a.name}</span>
-                              <span className="cat-amenity-t">{a.walk_min} min</span>
+                              <span className="cat-amenity-t">{Math.max(1, Math.round(a.walk_min))} min</span>
                             </li>
                           ))}
                         </ol>

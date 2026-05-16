@@ -18,6 +18,7 @@ import { categoryById, CATEGORIES, ICON_HOME } from "@/lib/categories";
 import type { AmenityForPoint } from "@/lib/supabase";
 import { useTheme } from "@/lib/theme";
 import { ZONE_REASONS, type Suggestion } from "@/lib/suggestions";
+import { pointInFeature } from "@/lib/geo";
 
 type GroupedPin = {
   lat: number;
@@ -167,6 +168,9 @@ const SCORES_URL = REMOTE_DATA
 const DEMAND_URL = REMOTE_DATA
   ? `${STORAGE}/cells/cell_demand_lite.json`
   : "/data/cell_demand_lite.json";
+const PROTECTED_URL = REMOTE_DATA
+  ? `${STORAGE}/overlays/zavarovana_si.geojson`
+  : "/data/zavarovana_si.geojson";
 
 const SLOVENIA_CENTER: [number, number] = [14.99, 46.15];
 const INITIAL_ZOOM = 7.5;
@@ -381,10 +385,24 @@ export default function SloveniaMap() {
   const [cellsByR6, setCellsByR6] = useState<Map<string, ScoreCell[]>>(new Map());
   const [demandByR6, setDemandByR6] = useState<Map<string, DemandCell[]>>(new Map());
   const [unpopByR6, setUnpopByR6] = useState<Map<string, string[]>>(new Map());
+  // Pre-aggregated score / demand caches at coarse resolutions (6 and 7).
+  // At zoom 9–11 the viewport covers most of Slovenia, so the viewport-cull
+  // pipeline still feeds aggregateMean ~800K cells per pan and chokes the
+  // main thread. Caching the full-Slovenia aggregation at the two coarse
+  // resolutions where the output is tiny (~700 hexes at r6, ~5K at r7) lets
+  // us bypass re-aggregation entirely in that zoom band. Built lazily in a
+  // deferred effect so initial paint isn't blocked.
+  const [scoresAggCache, setScoresAggCache] = useState<Map<number, ScoreCell[]>>(new Map());
+  const [demandAggCache, setDemandAggCache] = useState<Map<number, DemandCell[]>>(new Map());
   // Cached obcine GeoJSON — used client-side to synthesize the H3 cells over
   // unpopulated parts of Slovenia. Browser HTTP cache deduplicates with the
   // deck.gl GeoJsonLayer fetch.
   const [obcineFC, setObcineFC] = useState<GeoJSON.FeatureCollection | null>(null);
+  // Protected-area polygons kept in memory (separately from the deck.gl
+  // `data: PROTECTED_URL` fetch) so the investor-view suggestion-pin filter
+  // can run a point-in-polygon over them. Browser HTTP cache deduplicates
+  // with the GeoJsonLayer request — same URL.
+  const [protectedFC, setProtectedFC] = useState<GeoJSON.FeatureCollection | null>(null);
   const [zoom, setZoom] = useState<number>(INITIAL_ZOOM);
   const [usingDummy, setUsingDummy] = useState<boolean>(false);
   const [selectedH3, setSelectedH3] = useState<string | null>(null);
@@ -410,6 +428,15 @@ export default function SloveniaMap() {
   // segments older than `currentTime - trailLength`; with trailLength = 1e9
   // every revealed segment stays visible permanently.
   const [animTime, setAnimTime] = useState(0);
+  // Hex fade progress driven by routesActive. 0 = no fade, 1 = full fade.
+  // We animate this in JS via rAF (rather than deck.gl's per-attribute
+  // `transitions` config) because deck.gl interpolates per BUFFER INDEX —
+  // when zoom or pan changes the data array, the same index slot holds a
+  // different cell before/after, and deck.gl animates between their colors,
+  // producing the orange↔green flash the user reported. Driving the fade
+  // through state keeps each per-frame snapshot internally consistent.
+  const [fadeProgress, setFadeProgress] = useState(0);
+  const fadeProgressRef = useRef(0);
   // Investor view state — per-category scores, the active category filter,
   // and the precomputed building-suggestion pins shown on top of the demand
   // heatmap when a category is active.
@@ -461,6 +488,19 @@ export default function SloveniaMap() {
       .then((r) => (r.ok ? r.json() : null))
       .then((fc) => { if (!cancelled && fc) setObcineFC(fc as GeoJSON.FeatureCollection); })
       .catch(() => { /* unpop layer just stays empty — non-fatal */ });
+    return () => { cancelled = true; };
+  }, []);
+
+  // Same one-shot fetch for protected areas. Used by the investor-pin filter
+  // to drop OPN (yellow) new-construction proposals that land inside a
+  // protected polygon. FRO (red) pins stay regardless — they mark degraded
+  // areas slated for revitalization, which is appropriate even in parks.
+  useEffect(() => {
+    let cancelled = false;
+    fetch(PROTECTED_URL)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((fc) => { if (!cancelled && fc) setProtectedFC(fc as GeoJSON.FeatureCollection); })
+      .catch(() => { /* filter just no-ops if the fetch fails — non-fatal */ });
     return () => { cancelled = true; };
   }, []);
 
@@ -556,15 +596,32 @@ export default function SloveniaMap() {
     // panning and zooming finishes, so this single hook covers both.
     const syncViewportBuckets = () => {
       const b = map.getBounds();
-      // h3.polygonToCells expects a [lat,lng] ring, closed (first === last).
+      const cLat = (b.getSouth() + b.getNorth()) / 2;
+      const cLng = (b.getWest() + b.getEast()) / 2;
+      const dLat = b.getNorth() - cLat;   // half-height of the visible viewport
+      const dLng = b.getEast() - cLng;    // half-width  of the visible viewport
+      // Sample the bucket set over a 2×-linear region around the viewport
+      // center — pans that outrun the next moveend still find their cells
+      // already in `viewportBuckets`. Cost is one polygonToCells call;
+      // we're only filtering at hex zoom anyway (the obcina-fill path skips
+      // the visible* useMemos entirely).
       const ring: [number, number][] = [
-        [b.getSouth(), b.getWest()],
-        [b.getSouth(), b.getEast()],
-        [b.getNorth(), b.getEast()],
-        [b.getNorth(), b.getWest()],
-        [b.getSouth(), b.getWest()],
+        [cLat - 2 * dLat, cLng - 2 * dLng],
+        [cLat - 2 * dLat, cLng + 2 * dLng],
+        [cLat + 2 * dLat, cLng + 2 * dLng],
+        [cLat + 2 * dLat, cLng - 2 * dLng],
+        [cLat - 2 * dLat, cLng - 2 * dLng],
       ];
-      setViewportBuckets(new Set(h3.polygonToCells(ring, 6)));
+      const buckets = new Set(h3.polygonToCells(ring, 6));
+      // Critical safety net at zoom ≥ 13: a single r6 cell is ~12 km², which
+      // is larger than the (already 2×-expanded) viewport — no r6 *center*
+      // sits inside the ring and polygonToCells returns []. Always seed the
+      // bucket set with the r6 cell under the viewport center plus its
+      // 1-ring (7 cells, ~84 km² of coverage) so visibleCells is never empty
+      // while the user is over Slovenia.
+      const centerR6 = h3.latLngToCell(cLat, cLng, 6);
+      for (const c of h3.gridDisk(centerR6, 1)) buckets.add(c);
+      setViewportBuckets(buckets);
     };
     map.on("zoom", sync);
     map.on("moveend", sync);
@@ -629,10 +686,15 @@ export default function SloveniaMap() {
     return out;
   }, [cells, cellsByR6, viewportBuckets, showObcineFill]);
 
-  const aggregatedScores = useMemo(
-    () => (showObcineFill ? [] : aggregateMean(visibleCells, currentRes)),
-    [visibleCells, currentRes, showObcineFill],
-  );
+  const aggregatedScores = useMemo(() => {
+    if (showObcineFill) return [];
+    // Coarse-zoom fast path: serve the pre-aggregated full-Slovenia bake at
+    // r6 / r7. Skips the per-pan re-aggregation over hundreds of thousands
+    // of viewport-cull cells (which is what made zoom 9.25–10 feel laggy).
+    const cached = scoresAggCache.get(currentRes);
+    if (cached) return cached;
+    return aggregateMean(visibleCells, currentRes);
+  }, [scoresAggCache, visibleCells, currentRes, showObcineFill]);
 
   // Synthesize the H3 cells covering Slovenia's unpopulated geography
   // (forests / ridges / lakes — areas the Kontur population grid skips).
@@ -713,6 +775,23 @@ export default function SloveniaMap() {
     return () => { cancelled = true; clearTimeout(id); };
   }, [cells]);
 
+  // Build the coarse-zoom score-aggregation cache once cells land. Same
+  // setTimeout pattern as the bucket builders so the banner paints first.
+  // Resolutions 6 (~700 hexes) and 7 (~5K hexes) cover zoom 9–11; output
+  // arrays are tiny and Slovenia-wide so panning at coarse zoom doesn't
+  // need to re-aggregate.
+  useEffect(() => {
+    if (cells.length === 0) return;
+    let cancelled = false;
+    const id = setTimeout(() => {
+      if (cancelled) return;
+      const m = new Map<number, ScoreCell[]>();
+      for (const r of [6, 7]) m.set(r, aggregateMean(cells, r));
+      if (!cancelled) setScoresAggCache(m);
+    }, 80);
+    return () => { cancelled = true; clearTimeout(id); };
+  }, [cells]);
+
   useEffect(() => {
     if (unpopCells.length === 0) return;
     let cancelled = false;
@@ -779,19 +858,75 @@ export default function SloveniaMap() {
     return () => cancelAnimationFrame(raf);
   }, [animatedPaths]);
 
+  // Hex fade gate. Lifted out of the layer-build effect so the rAF driver
+  // below can read it.
+  const routesActive = useMemo(
+    () => isoFeature !== null || (routeSet !== null && routeSet.paths.length > 0),
+    [isoFeature, routeSet],
+  );
+
+  // Občina under the selected hex's centroid. Brute-force point-in-polygon
+  // against the 212 cached občine — under 1 ms per click — so we can show
+  // the municipality name in the Scorecard header without a server roundtrip.
+  const cellObcinaName = useMemo<string | null>(() => {
+    if (!selectedH3 || !obcineFC) return null;
+    const [lat, lng] = h3.cellToLatLng(selectedH3);
+    for (const f of obcineFC.features) {
+      if (pointInFeature(lng, lat, f)) {
+        return ((f.properties as ObcinaProps | null)?.OB_UIME) ?? null;
+      }
+    }
+    return null;
+  }, [selectedH3, obcineFC]);
+
+  // Drive fadeProgress 0↔1 over 500 ms whenever routesActive flips. Each frame
+  // of the animation forces the layer-build effect to re-run (fadeProgress is
+  // a dep), and the H3HexagonLayer's getFillColor reads the new value via
+  // updateTriggers — yielding a smooth fade without using deck.gl's per-index
+  // attribute interpolation (which is what caused the zoom/pan flash).
+  useEffect(() => {
+    const target = routesActive ? 1 : 0;
+    const from = fadeProgressRef.current;
+    if (from === target) return;
+    const start = performance.now();
+    let raf = 0;
+    const tick = (now: number) => {
+      const t = Math.min(1, (now - start) / 500);
+      const next = from + (target - from) * t;
+      fadeProgressRef.current = next;
+      setFadeProgress(next);
+      if (t < 1) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [routesActive]);
+
   // Keyed by h3 for O(1) child lookup in investor onClick.
   const cellsMap = useMemo(() => new Map(cells.map((c) => [c.h3, c])), [cells]);
 
   const groupedPins = useMemo<GroupedPin[]>(() => {
+    // Drop OPN ("opn", yellow) suggestions whose point falls inside a
+    // protected polygon — new construction proposals don't apply in parks.
+    // FRO ("fro", red, degraded land slated for revitalization) is allowed
+    // anywhere, including inside protected areas. If the protected GeoJSON
+    // hasn't loaded yet we just skip the filter (non-fatal).
+    const inProtected = (lng: number, lat: number) => {
+      if (!protectedFC) return false;
+      for (const f of protectedFC.features) {
+        if (pointInFeature(lng, lat, f)) return true;
+      }
+      return false;
+    };
     const map = new Map<string, GroupedPin>();
     for (const s of suggestionPins) {
+      if (s.source === "opn" && inProtected(s.lng, s.lat)) continue;
       const key = `${s.lat.toFixed(5)},${s.lng.toFixed(5)}`;
       const existing = map.get(key);
       if (existing) existing.items.push(s);
       else map.set(key, { lat: s.lat, lng: s.lng, zoneCode: s.zoneCode, zoneDesc: s.zoneDesc, items: [s] });
     }
     return Array.from(map.values());
-  }, [suggestionPins]);
+  }, [suggestionPins, protectedFC]);
 
   // Derive investorCells from pre-baked demand. Base case (no category filter)
   // is instant — wd/bd already computed. Category filter requires h3.cellToParent
@@ -849,6 +984,20 @@ export default function SloveniaMap() {
     return () => { cancelled = true; clearTimeout(id); };
   }, [investorCells]);
 
+  // Coarse-zoom demand aggregation cache — analogous to `scoresAggCache`.
+  // Rebuilds whenever investorCells changes (category toggle or fresh load).
+  useEffect(() => {
+    if (investorCells.length === 0) return;
+    let cancelled = false;
+    const id = setTimeout(() => {
+      if (cancelled) return;
+      const m = new Map<number, DemandCell[]>();
+      for (const r of [6, 7]) m.set(r, aggregateDemand(investorCells, r));
+      if (!cancelled) setDemandAggCache(m);
+    }, 80);
+    return () => { cancelled = true; clearTimeout(id); };
+  }, [investorCells]);
+
   // Viewport-culled subset of `investorCells`. Same fall-through rule as
   // `visibleCells`. Note: a category toggle resets `investorCells` ~50–500 ms
   // before `demandByR6` rebuilds; during that window the bucket map is stale
@@ -866,10 +1015,13 @@ export default function SloveniaMap() {
     return out;
   }, [investorCells, demandByR6, viewportBuckets, showObcineFill]);
 
-  const aggregatedInvestorCells = useMemo(
-    () => (showObcineFill ? [] : aggregateDemand(visibleInvestor, currentRes)),
-    [visibleInvestor, currentRes, showObcineFill],
-  );
+  const aggregatedInvestorCells = useMemo(() => {
+    if (showObcineFill) return [];
+    // Same coarse-zoom fast path as `aggregatedScores` above.
+    const cached = demandAggCache.get(currentRes);
+    if (cached) return cached;
+    return aggregateDemand(visibleInvestor, currentRes);
+  }, [demandAggCache, visibleInvestor, currentRes, showObcineFill]);
 
   const demandThresholds = useMemo<DemandThresholds>(() => {
     // Anchored on the full `investorCells` set rather than the viewport-culled
@@ -937,16 +1089,17 @@ export default function SloveniaMap() {
     // When the user has triggered a route or isochrone overlay, fade hex
     // fills so the new overlay reads. Non-selected hexes drop alpha by 0.30
     // (barely visible); the selected hex drops only 0.15 so it stays the
-    // anchor of the visible area. See plan §B for the alpha sanity table.
-    const routesActive = isoFeature !== null
-      || (routeSet !== null && routeSet.paths.length > 0);
+    // anchor of the visible area. fadeProgress (0..1) is driven by a rAF
+    // effect above; multiplying through it gives a smooth 500 ms ease without
+    // relying on deck.gl's `transitions` (which interpolates per buffer
+    // index and flashes when the data array re-orders on zoom/pan).
     const selectedAtCurrentRes = selectedH3
       ? h3.cellToParent(selectedH3, currentRes)
       : null;
     const fade = (c: Rgba, delta: number): Rgba =>
       delta === 0 ? c : [c[0], c[1], c[2], Math.max(0, Math.round(c[3] - delta * 255))];
     const fadeDelta = (h3id: string): number =>
-      routesActive ? (h3id === selectedAtCurrentRes ? 0.15 : 0.30) : 0;
+      (h3id === selectedAtCurrentRes ? 0.15 : 0.30) * fadeProgress;
     // Selection feedback for the občina-fill / investor-obcine layers: the
     // clicked municipality gets its alpha bumped by 0.15 so it pops out from
     // its neighbors. Identifier is OB_UIME (Slovenian občine all have unique
@@ -973,8 +1126,8 @@ export default function SloveniaMap() {
           getHexagon: (d) => d,
           // Unpop cells never match `selectedAtCurrentRes` (selection is over
           // populated cells only), so they always take the full fade.
-          getFillColor: routesActive ? fade(unpopBase, 0.30) : unpopBase,
-          updateTriggers: { getFillColor: [routesActive, hexDark] },
+          getFillColor: (_d: string) => fade(unpopBase, 0.30 * fadeProgress),
+          updateTriggers: { getFillColor: [fadeProgress, hexDark] },
         }),
       );
     }
@@ -1034,7 +1187,7 @@ export default function SloveniaMap() {
             lineWidthUnits: "pixels",
             getLineWidth: 0.5,
             updateTriggers: {
-              getFillColor: [mode, demandThresholds, hexDark, routesActive, selectedAtCurrentRes],
+              getFillColor: [mode, demandThresholds, hexDark, fadeProgress, selectedAtCurrentRes],
             },
             onClick: ({ object }) => {
               if (!object) return;
@@ -1109,7 +1262,7 @@ export default function SloveniaMap() {
           lineWidthUnits: "pixels",
           getLineWidth: 0.5,
           updateTriggers: {
-            getFillColor: [aggregatedScores, mode, hexDark, routesActive, selectedAtCurrentRes],
+            getFillColor: [aggregatedScores, mode, hexDark, fadeProgress, selectedAtCurrentRes],
           },
           onClick: ({ object }) => {
             if (!object) return;
@@ -1153,6 +1306,27 @@ export default function SloveniaMap() {
         );
       }
     }
+
+    // Protected / zavarovana areas overlay — drawn above every hex layer in
+    // both 15-min and investor views so Triglavski narodni park and friends
+    // read as "not applicable" rather than blending into the unpop pale-
+    // parchment tile. Sits below iso/route/selected-hex layers so user
+    // interactions stay legible. No cell scoring touched: this is pure visual.
+    layers.push(
+      new GeoJsonLayer({
+        id: "protected-areas",
+        data: PROTECTED_URL,
+        stroked: true,
+        filled: true,
+        // Theme-aware translucent gray. Dark mode picks a *lighter* gray so
+        // the polygon doesn't disappear into the darkened basemap.
+        getFillColor: theme === "dark" ? [200, 200, 200, 90] : [80, 80, 80, 100],
+        getLineColor: theme === "dark" ? [210, 210, 210, 180] : [60, 60, 60, 180],
+        lineWidthMinPixels: 1,
+        pickable: false,
+        updateTriggers: { getFillColor: [theme], getLineColor: [theme] },
+      }),
+    );
 
     if (isoFeature) {
       layers.push(
@@ -1352,7 +1526,7 @@ export default function SloveniaMap() {
     }
 
     overlay.setProps({ layers, getTooltip: suggestionTooltip });
-  }, [aggregatedScores, aggregatedInvestorCells, aggregatedUnpop, demandThresholds, catScores, investorCat, groupedPins, cellsMap, showObcineFill, currentRes, view, isoFeature, routeSet, amenityDots, hoveredAmenity, mode, selectedH3, selectedObcina, originLngLat, animatedPaths, animTime, theme]);
+  }, [aggregatedScores, aggregatedInvestorCells, aggregatedUnpop, demandThresholds, catScores, investorCat, groupedPins, cellsMap, showObcineFill, currentRes, view, isoFeature, routeSet, amenityDots, hoveredAmenity, mode, selectedH3, selectedObcina, originLngLat, animatedPaths, animTime, theme, fadeProgress]);
 
   const suggestionTooltip = ({ object, layer }: { object?: unknown; layer?: { id: string } | null }) => {
     if (layer?.id !== "suggestions" || !object) return null;
@@ -1486,6 +1660,10 @@ export default function SloveniaMap() {
                 <span className="legend-swatch" style={{ background: "rgb(239,68,68)" }} />
                 0–1 / 8
               </div>
+              <div className="legend-row">
+                <span className="legend-swatch" style={{ background: "rgb(120,120,120)" }} />
+                Zavarovano (izvzeto)
+              </div>
             </div>
           )}
         </div>
@@ -1529,6 +1707,10 @@ export default function SloveniaMap() {
               <div className="legend-row">
                 <span className="legend-swatch" style={{ background: "rgb(68,1,84)" }} />
                 Zanemarljiv
+              </div>
+              <div className="legend-row">
+                <span className="legend-swatch" style={{ background: "rgb(120,120,120)" }} />
+                Zavarovano (izvzeto)
               </div>
             </div>
           )}
@@ -1586,6 +1768,7 @@ export default function SloveniaMap() {
         h3id={selectedH3}
         mode={mode}
         originLngLat={originLngLat}
+        obcinaName={cellObcinaName}
         onClose={() => {
           if (originFromAddress) addressSearchRef.current?.clear();
           setSelectedH3(null);

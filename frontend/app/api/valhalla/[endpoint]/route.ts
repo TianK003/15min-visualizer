@@ -12,7 +12,7 @@ export const runtime = "nodejs";
 // In production this becomes the Railway URL.
 const VALHALLA = process.env.VALHALLA_URL ?? "http://127.0.0.1:8002";
 
-const ALLOWED = new Set(["isochrone", "route", "locate", "matrix", "trace_route"]);
+const ALLOWED = new Set(["isochrone", "route", "locate", "matrix", "sources_to_targets", "trace_route"]);
 
 export async function POST(
   req: NextRequest,

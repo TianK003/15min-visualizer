@@ -707,6 +707,8 @@ button { font-family: inherit; }
   font-weight: 600;
   font-size: 13px;
   cursor: pointer;
+  /* Softened against the translucent .scorecard background. */
+  opacity: 0.9;
   transition: background 140ms ease, transform 140ms ease;
 }
 .iso-btn:hover:not(:disabled) {

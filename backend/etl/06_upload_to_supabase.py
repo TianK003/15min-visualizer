@@ -232,6 +232,7 @@ def upload_storage_files() -> None:
             ("cells",    "cell_demand_lite.json",     "cell_demand_lite.json",     "application/json",     None),
             ("overlays", "obcine_scored.geojson",     "obcine_scored.geojson",     "application/geo+json", None),
             ("overlays", "cell_population_lite.json", "cell_population_lite.json", "application/json",     None),
+            ("overlays", "zavarovana_si.geojson",     "zavarovana_si.geojson",     "application/geo+json", None),
         ]
         for bucket, src_name, dst_name, ctype, encoding in files:
             src = DATA_DIR / src_name

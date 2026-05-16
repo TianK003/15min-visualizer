@@ -75,4 +75,37 @@ export async function route({ from, to, costing = "pedestrian" }: RouteOptions) 
   }>;
 }
 
+/** One-to-many travel-time matrix. Used by the Scorecard to refine the
+ *  pre-baked 5-min-step `walk_min` values (from `amenities_for_point`, which
+ *  reads the 5/10/15-min isochrone bake) to true Valhalla minute-accurate
+ *  times. Returns rounded minutes per target, or `null` for unreachable
+ *  targets. Falls within the same `costing_options` (locked walking / cycling
+ *  speeds) as the existing isochrone and route helpers.
+ *
+ *  Goes through the Next.js proxy at /api/valhalla/sources_to_targets — see
+ *  the proxy's ALLOWED set. */
+export async function timeMatrix(
+  source: { lat: number; lng: number },
+  targets: Array<{ lat: number; lng: number }>,
+  costing: Costing = "pedestrian",
+): Promise<Array<number | null>> {
+  if (targets.length === 0) return [];
+  const res = await fetch(`${VALHALLA_URL}/sources_to_targets`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      sources: [{ lat: source.lat, lon: source.lng }],
+      targets: targets.map((t) => ({ lat: t.lat, lon: t.lng })),
+      costing,
+      costing_options: costingOptions(costing),
+    }),
+  });
+  if (!res.ok) throw new Error(`Valhalla /sources_to_targets ${res.status}`);
+  const data = (await res.json()) as {
+    sources_to_targets: Array<Array<{ time: number | null }>>;
+  };
+  const row = data.sources_to_targets?.[0] ?? [];
+  return row.map((c) => (c.time === null || c.time === undefined ? null : c.time / 60));
+}
+
 export const VALHALLA_BASE = VALHALLA_URL;
