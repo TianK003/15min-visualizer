@@ -1266,7 +1266,7 @@ export default function SloveniaMap() {
             id: "investor-hex",
             data: aggregatedInvestorCells,
             pickable: true,
-            stroked: currentRes < H3_BASE_RES,
+            stroked: true,
             filled: true,
             extruded: false,
             getHexagon: (d) => d.h3,
