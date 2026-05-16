@@ -108,13 +108,13 @@ const AddressSearch = forwardRef<AddressSearchHandle, Props>(function AddressSea
         try {
           // Photon doesn't support "sl" — accepts en/de/fr/it/ja. Use default (no lang).
           const features = await searchPhoton(q, ac.signal);
-          setResults(features);
+          setResults(dedupByLabel(features));
           setErr(null);
         } catch (e: unknown) {
           if ((e as { name?: string })?.name === "AbortError") return;
           try {
             const features = await searchNominatim(q, ac.signal);
-            setResults(features);
+            setResults(dedupByLabel(features));
             setErr(null);
           } catch (e2: unknown) {
             if ((e2 as { name?: string })?.name === "AbortError") return;
@@ -202,4 +202,20 @@ function labelFor(f: PhotonFeature): string {
   const street = [p.street, p.housenumber].filter(Boolean).join(" ");
   const city = [p.postcode, p.city].filter(Boolean).join(" ");
   return [p.name, street, city].filter(Boolean).join(", ");
+}
+
+// Drop entries whose display label collides with one already kept. Both
+// providers (Photon and Nominatim) occasionally return multiple features for
+// the same street address (e.g. one per building entrance) — those are
+// indistinguishable in the dropdown, so keep the first and skip the rest.
+function dedupByLabel(features: PhotonFeature[]): PhotonFeature[] {
+  const seen = new Set<string>();
+  const out: PhotonFeature[] = [];
+  for (const f of features) {
+    const key = labelFor(f).trim().toLowerCase();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(f);
+  }
+  return out;
 }
