@@ -13,6 +13,8 @@ import ObcinaInfoCard, { type ObcinaInfo } from "@/components/ObcinaInfoCard";
 import AddressSearch, { type AddressSearchHandle } from "@/components/AddressSearch";
 import IzvorPodatkov from "@/components/IzvorPodatkov";
 import ChatBox from "@/components/ChatBox";
+import ResultCard from "@/components/ResultCard";
+import type { SearchResult } from "@/lib/llm-search";
 import ThemeToggle from "@/components/ThemeToggle";
 import { categoryById, CATEGORIES, ICON_HOME } from "@/lib/categories";
 import type { AmenityForPoint } from "@/lib/supabase";
@@ -275,10 +277,10 @@ const UNPOP_COLOR: Rgba = [212, 207, 188, 150];
 // reads for color-blind users and at a glance. Alpha 170 (~67 %) gives strong
 // data presence without fully hiding the Positron basemap underneath.
 function colorForDemand(demand: number, t: DemandThresholds): Rgba {
-  if (demand >= t.p90) return [253, 231, 37, 170];   // bright yellow — visok
-  if (demand >= t.p75) return [53, 183, 121, 170];   // green — srednji
-  if (demand >= t.p50) return [49, 104, 142, 170];   // teal-blue — nizek
-  return [68, 1, 84, 170];                            // dark purple — zanemarljiv
+  if (demand >= t.p90) return [253, 231, 37, 102];   // bright yellow — visok
+  if (demand >= t.p75) return [53, 183, 121, 102];   // green — srednji
+  if (demand >= t.p50) return [49, 104, 142, 102];   // teal-blue — nizek
+  return [68, 1, 84, 102];                            // dark purple — zanemarljiv
 }
 
 function colorForScore(score: number): Rgba {
@@ -480,6 +482,10 @@ export default function SloveniaMap() {
   const [demographicsBySifra, setDemographicsBySifra] = useState<
     Map<number, { el65: number; kids: number }>
   >(new Map());
+  // AI search results: up to 5 cells returned by /api/llm-search.
+  // Source of truth for the ai-search-pins ScatterplotLayer.
+  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
+  const [hoveredResultH3, setHoveredResultH3] = useState<string | null>(null);
 
   // Fetch real scores; fall back to dummy if not yet baked.
   useEffect(() => {
@@ -1260,7 +1266,7 @@ export default function SloveniaMap() {
             id: "investor-hex",
             data: aggregatedInvestorCells,
             pickable: true,
-            stroked: currentRes < H3_BASE_RES,
+            stroked: true,
             filled: true,
             extruded: false,
             getHexagon: (d) => d.h3,
@@ -1615,8 +1621,34 @@ export default function SloveniaMap() {
       );
     }
 
+    if (searchResults.length > 0) {
+      const PIN_BLUE: [number, number, number, number] = [37, 99, 235, 240];
+      layers.push(
+        new ScatterplotLayer<SearchResult>({
+          id: "ai-search-pins",
+          data: searchResults,
+          getPosition: (d) => {
+            const [lat, lng] = h3.cellToLatLng(d.h3);
+            return [lng, lat];
+          },
+          getRadius: (d) => (d.h3 === hoveredResultH3 ? 14 : 10),
+          radiusUnits: "pixels",
+          getFillColor: PIN_BLUE,
+          getLineColor: [255, 255, 255, 230],
+          lineWidthMinPixels: 2,
+          stroked: true,
+          pickable: true,
+          onHover: (info) => {
+            const next = (info?.object as SearchResult | null)?.h3 ?? null;
+            if (next !== hoveredResultH3) setHoveredResultH3(next);
+          },
+          updateTriggers: { getRadius: hoveredResultH3 },
+        }),
+      );
+    }
+
     overlay.setProps({ layers, getTooltip: suggestionTooltip });
-  }, [aggregatedScores, aggregatedInvestorCells, aggregatedUnpop, demandThresholds, catScores, investorCat, groupedPins, cellsMap, showObcineFill, currentRes, view, isoFeature, routeSet, amenityDots, hoveredAmenity, mode, selectedH3, selectedObcina, originLngLat, animatedPaths, animTime, theme, fadeProgress]);
+  }, [aggregatedScores, aggregatedInvestorCells, aggregatedUnpop, demandThresholds, catScores, investorCat, groupedPins, cellsMap, showObcineFill, currentRes, view, isoFeature, routeSet, amenityDots, hoveredAmenity, mode, selectedH3, selectedObcina, originLngLat, animatedPaths, animTime, theme, fadeProgress, searchResults, hoveredResultH3]);
 
   const suggestionTooltip = ({ object, layer }: { object?: unknown; layer?: { id: string } | null }) => {
     if (layer?.id !== "suggestions" || !object) return null;
@@ -1695,7 +1727,18 @@ export default function SloveniaMap() {
 
   return (
     <>
-      <ChatBox onSelectH3={setSelectedH3} flyToCoord={flyToCoord} />
+      {/* v1 ChatBox kept importable for one-line rollback */}
+      {/* <ChatBox onSelectH3={setSelectedH3} flyToCoord={flyToCoord} /> */}
+      <ResultCard
+        onResultsChange={setSearchResults}
+        onRowHover={setHoveredResultH3}
+        highlightH3={hoveredResultH3}
+        onZoomToResult={(r) => {
+          const [lat, lng] = h3.cellToLatLng(r.h3);
+          flyToCoord(lng, lat, 14);
+          setTimeout(() => setSelectedH3(r.h3), 200);
+        }}
+      />
       <div id="map-root" ref={containerRef} />
 
       <div className="top-row">

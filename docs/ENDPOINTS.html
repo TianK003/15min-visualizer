@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>15min Slovenija — Endpoint Graph</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    html, body { margin: 0; padding: 0; background: #0b1220; color: #e2e8f0;
+      font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+    header { padding: 16px 24px; border-bottom: 1px solid #1e293b; }
+    header h1 { margin: 0 0 4px; font-size: 18px; font-weight: 600; }
+    header p { margin: 0; font-size: 13px; color: #94a3b8; }
+    .toolbar { padding: 10px 24px; border-bottom: 1px solid #1e293b;
+      display: flex; gap: 12px; align-items: center; font-size: 13px; }
+    .toolbar button { background: #1e293b; color: #e2e8f0; border: 1px solid #334155;
+      padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+    .toolbar button:hover { background: #334155; }
+    .toolbar span { color: #94a3b8; }
+    main { padding: 16px 24px 48px; overflow: auto; }
+    .mermaid { background: #fff; border-radius: 8px; padding: 16px;
+      transform-origin: top left; transition: transform 0.15s ease; }
+    .legend { margin-top: 24px; font-size: 13px; color: #cbd5e1; }
+    .legend table { border-collapse: collapse; width: 100%; max-width: 1100px; }
+    .legend th, .legend td { border: 1px solid #1e293b; padding: 6px 10px; text-align: left;
+      vertical-align: top; }
+    .legend th { background: #1e293b; color: #e2e8f0; font-weight: 600; }
+    .legend code { background: #0f172a; padding: 1px 5px; border-radius: 3px;
+      color: #93c5fd; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>15min Slovenija — Endpoint Graph</h1>
+    <p>Every HTTP endpoint the system talks to, grouped by who initiates the call. Generated from <code>docs/ENDPOINTS.mmd</code>.</p>
+  </header>
+
+  <div class="toolbar">
+    <button onclick="zoomBy(1.15)">Zoom +</button>
+    <button onclick="zoomBy(0.87)">Zoom -</button>
+    <button onclick="resetZoom()">Reset</button>
+    <button onclick="downloadSvg()">Download SVG</button>
+    <span>Tip: scroll horizontally if the graph overflows.</span>
+  </div>
+
+  <main>
+    <pre class="mermaid" id="diagram">
+flowchart LR
+  Client["Client (Browser)<br/>Next.js 14 / MapLibre / deck.gl"]
+  Next["Next.js Server<br/>(Vercel runtime)"]
+  Valhalla["Valhalla<br/>Railway :8002"]
+  Supa["Supabase<br/>Postgres + PostGIS + Storage"]
+  OFM["OpenFreeMap<br/>tiles.openfreemap.org"]
+  Photon["Photon<br/>photon.komoot.io"]
+  Nominatim["Nominatim<br/>nominatim.openstreetmap.org"]
+  OR["OpenRouter<br/>openrouter.ai -> minimax/minimax-01"]
+  EProstor["e-prostor (GURS/MNVP)<br/>ipi.eprostor.gov.si"]
+  ARSO["ARSO GeoServer<br/>gis.arso.gov.si"]
+  Geofabrik["Geofabrik<br/>download.geofabrik.de"]
+  GURSmirror["GURS mirror<br/>github.com/stefanb/gurs-rpe"]
+  Kontur["Kontur (HDX)<br/>data.humdata.org"]
+  SURS["SURS SiStat<br/>pxweb.stat.si"]
+  ETL["ETL Pipeline<br/>(offline, Python)"]
+  Static["/public/data/*<br/>(static JSON shipped w/ build)"]
+
+  Client -- "GET /styles/positron, /styles/dark-matter<br/>vector basemap tiles" --> OFM
+  Client -- "GET /api/?q=Q&amp;bbox=SI&amp;limit=6<br/>address suggestions" --> Photon
+  Client -- "GET /search?q=..&amp;countrycodes=si<br/>fallback geocode" --> Nominatim
+
+  Client -- "GET /storage/v1/object/public/cells/cell_scores_lite.json<br/>GET .../cells/cell_demand_lite.json<br/>GET .../overlays/obcine_scored.geojson<br/>GET .../overlays/zavarovana_si.geojson" --> Supa
+  Client -- "POST /rest/v1/rpc/amenities_for_point {p_lat,p_lng,p_mode}<br/>GET /rest/v1/cell_scores?h3=eq.X<br/>GET /rest/v1/obcine?naziv=eq.X<br/>POST /rest/v1/rpc/llm_search_cells {filter_spec,p_limit}<br/>+ apikey/Bearer anon" --> Supa
+
+  Client -- "GET wfs-si-mnvp-pa/wfs (OPN zones NRP_OPN, CQL BBOX)<br/>GET wfs-si-gurs-kn/wfs (STAVBE_OBRIS, BBOX)" --> EProstor
+
+  Client -- "GET /data/cell_cat_scores.json<br/>GET /data/building_suggestions.json<br/>GET /data/obcine_demographics.json<br/>GET /data/fro.geojson" --> Static
+
+  Client -- "POST /api/llm {kind, query|h3+score+walk_min}<br/>POST /api/valhalla/{isochrone|route|sources_to_targets}" --> Next
+
+  Next -- "POST /isochrone {locations,costing,contours}<br/>POST /route {locations,costing}<br/>POST /sources_to_targets {sources,targets,costing}<br/>(proxy: avoids CORS preflight)" --> Valhalla
+  Next -- "POST /api/v1/chat/completions<br/>{model: minimax/minimax-01, messages, response_format: json_object}" --> OR
+  Next -- "GET /api/?q=town&amp;limit=1<br/>lat/lng for H3 disk" --> Photon
+  Next -- "POST /rest/v1/rpc/llm_search_cells {filter_spec,p_limit}" --> Supa
+
+  Geofabrik   -- "curl slovenia-latest.osm.pbf (~300 MB)" --> ETL
+  GURSmirror  -- "curl OB.geojson (212 obcine)" --> ETL
+  ARSO        -- "WFS GetFeature ZOS_ZO_PLG_DRZ + ZOS_N2K_PLG" --> ETL
+  Kontur      -- "kontur_population_SI.gpkg" --> ETL
+  SURS        -- "PxWeb /api/v1/sl/Data (age shares, indicators)" --> ETL
+  ETL -- "POST /isochrone x 112,866 (amenity bake)" --> Valhalla
+  ETL -- "psql + storage upload<br/>cell_scores, cell_amenities, obcine, overlays/*" --> Supa
+  ETL -- "writes cell_scores_lite, cell_demand_lite,<br/>obcine_scored, obcine_demographics,<br/>cell_cat_scores, building_suggestions, fro" --> Static
+
+  classDef client fill:#dbeafe,stroke:#1e40af,color:#0f172a;
+  classDef server fill:#fef3c7,stroke:#a16207,color:#0f172a;
+  classDef datastore fill:#dcfce7,stroke:#15803d,color:#0f172a;
+  classDef external fill:#fce7f3,stroke:#be185d,color:#0f172a;
+  classDef etl fill:#e9d5ff,stroke:#7c3aed,color:#0f172a;
+  class Client client;
+  class Next,Valhalla server;
+  class Supa,Static datastore;
+  class OFM,Photon,Nominatim,OR,EProstor,ARSO,Geofabrik,GURSmirror,Kontur,SURS external;
+  class ETL etl;
+    </pre>
+
+    <section class="legend">
+      <h2 style="font-size:15px; margin:24px 0 8px;">Endpoint table</h2>
+      <table>
+        <thead><tr><th>Caller</th><th>Endpoint</th><th>Method</th><th>Payload</th></tr></thead>
+        <tbody>
+          <tr><td>Client</td><td><code>tiles.openfreemap.org/styles/{positron,dark-matter}</code></td><td>GET</td><td>basemap tiles</td></tr>
+          <tr><td>Client</td><td><code>photon.komoot.io/api/?q=...&amp;bbox=SI</code></td><td>GET</td><td>address query</td></tr>
+          <tr><td>Client</td><td><code>nominatim.openstreetmap.org/search</code></td><td>GET</td><td>fallback geocode</td></tr>
+          <tr><td>Client</td><td><code>{SUPABASE}/storage/v1/object/public/{cells,overlays}/...</code></td><td>GET</td><td>static GeoJSON/JSON</td></tr>
+          <tr><td>Client</td><td><code>{SUPABASE}/rest/v1/rpc/amenities_for_point</code></td><td>POST</td><td><code>{p_lat,p_lng,p_mode}</code></td></tr>
+          <tr><td>Client</td><td><code>{SUPABASE}/rest/v1/cell_scores?h3=eq.X</code></td><td>GET</td><td>—</td></tr>
+          <tr><td>Client</td><td><code>{SUPABASE}/rest/v1/obcine?naziv=eq.X</code></td><td>GET</td><td>—</td></tr>
+          <tr><td>Client</td><td><code>ipi.eprostor.gov.si/wfs-si-mnvp-pa/wfs</code> (OPN zones)</td><td>GET</td><td>WFS GetFeature + CQL BBOX</td></tr>
+          <tr><td>Client</td><td><code>ipi.eprostor.gov.si/wfs-si-gurs-kn/wfs</code> (building footprints)</td><td>GET</td><td>WFS GetFeature + BBOX</td></tr>
+          <tr><td>Client</td><td><code>/api/llm</code> (own Next route)</td><td>POST</td><td><code>{kind, query | h3+score+walk_min}</code></td></tr>
+          <tr><td>Client</td><td><code>/api/valhalla/{endpoint}</code> (own proxy)</td><td>POST</td><td>Valhalla body</td></tr>
+          <tr><td>Next.js</td><td><code>openrouter.ai/api/v1/chat/completions</code></td><td>POST</td><td><code>{model: minimax/minimax-01, messages}</code></td></tr>
+          <tr><td>Next.js</td><td><code>photon.komoot.io/api/?q=&lt;target_town&gt;</code></td><td>GET</td><td>town name -&gt; H3 disk</td></tr>
+          <tr><td>Next.js</td><td><code>{SUPABASE}/rest/v1/rpc/llm_search_cells</code></td><td>POST</td><td><code>{filter_spec, p_limit}</code></td></tr>
+          <tr><td>Next.js</td><td><code>{VALHALLA}/{isochrone,route,sources_to_targets,...}</code></td><td>POST</td><td>locations + costing</td></tr>
+          <tr><td>ETL</td><td><code>download.geofabrik.de/europe/slovenia-latest.osm.pbf</code></td><td>GET</td><td>—</td></tr>
+          <tr><td>ETL</td><td><code>github.com/stefanb/gurs-rpe/.../OB.geojson</code></td><td>GET</td><td>—</td></tr>
+          <tr><td>ETL</td><td><code>gis.arso.gov.si/geoserver/ows</code> (ZOS_ZO_PLG_DRZ, ZOS_N2K_PLG)</td><td>GET</td><td>WFS GetFeature</td></tr>
+          <tr><td>ETL</td><td><code>data.humdata.org/.../kontur_population_SI.gpkg</code></td><td>GET</td><td>—</td></tr>
+          <tr><td>ETL</td><td><code>pxweb.stat.si/SiStatData/api/v1/sl/Data</code></td><td>GET</td><td>PxWeb queries</td></tr>
+          <tr><td>ETL</td><td><code>{VALHALLA}/isochrone</code> x 112,866</td><td>POST</td><td>per-amenity bake</td></tr>
+          <tr><td>ETL</td><td>Supabase Postgres + Storage</td><td>psql / upload</td><td>tables + overlay files</td></tr>
+        </tbody>
+      </table>
+    </section>
+  </main>
+
+  <script type="module">
+    import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+    mermaid.initialize({ startOnLoad: true, theme: "default", flowchart: { htmlLabels: true, curve: "basis" } });
+  </script>
+  <script>
+    let scale = 1;
+    function applyScale() {
+      const d = document.getElementById("diagram");
+      d.style.transform = `scale(${scale})`;
+    }
+    function zoomBy(f) { scale = Math.min(3, Math.max(0.3, scale * f)); applyScale(); }
+    function resetZoom() { scale = 1; applyScale(); }
+    function downloadSvg() {
+      const svg = document.querySelector("#diagram svg");
+      if (!svg) { alert("Diagram still rendering — try again in a second."); return; }
+      const xml = new XMLSerializer().serializeToString(svg);
+      const blob = new Blob([xml], { type: "image/svg+xml" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = "endpoints.svg";
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(a.href);
+    }
+  </script>
+</body>
+</html>
