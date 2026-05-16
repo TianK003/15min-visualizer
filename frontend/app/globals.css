@@ -476,6 +476,8 @@ button { font-family: inherit; }
   font-size: 13px;
   line-height: 1.4;
   color: var(--text-primary);
+  /* Slightly more see-through so the highlighted hex stays readable behind. */
+  opacity: 0.95;
 }
 .scorecard-close {
   position: absolute;
@@ -714,6 +716,157 @@ button { font-family: inherit; }
 .iso-btn:disabled { opacity: 0.6; cursor: progress; }
 
 /* (amenities-detail block was removed — per-row chevron expansion replaces it.) */
+
+/* ────────────────────────────────────────────────────────────────────────
+   Občina info card — opened from the obcina-fill click handler at low zoom.
+   Mirrors `.scorecard` visual language so the map has one card vocabulary.
+   ──────────────────────────────────────────────────────────────────────── */
+.obcina-card {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  z-index: 20;
+  width: 340px;
+  max-height: calc(100vh - 100px);
+  overflow-y: auto;
+  padding: 18px 20px 20px;
+  border-radius: var(--radius-lg);
+  background: var(--surface-glass-strong);
+  backdrop-filter: var(--blur-strong);
+  -webkit-backdrop-filter: var(--blur-strong);
+  border: 1px solid var(--border-glass);
+  box-shadow: var(--shadow-xl);
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--text-primary);
+}
+.obcina-card-close {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  width: 28px;
+  height: 28px;
+  background: transparent;
+  border: 0;
+  font-size: 22px;
+  line-height: 1;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: color 120ms ease, background 120ms ease;
+}
+.obcina-card-close:hover {
+  color: var(--text-primary);
+  background: var(--border-faint);
+}
+.obcina-card-header {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  margin-bottom: 16px;
+}
+.obcina-card-title {
+  min-width: 0;
+  flex: 1;
+}
+.obcina-card-name {
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.2;
+  margin-bottom: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.obcina-card-sub {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+.obcina-card-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin: 0 0 16px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  background: var(--border-faint);
+}
+.obcina-card-stats > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.obcina-card-stats dt {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-tertiary);
+  font-weight: 500;
+}
+.obcina-card-stats dd {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.obcina-card-rowtitle {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-tertiary);
+  font-weight: 500;
+  margin-bottom: 8px;
+}
+.obcina-card-rows {
+  display: grid;
+  gap: 2px;
+}
+.obcina-card-row {
+  display: grid;
+  grid-template-columns: 28px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+}
+.obcina-card-row .ico {
+  width: 18px;
+  height: 18px;
+  color: var(--text-secondary);
+}
+.obcina-card-row .ico svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+.obcina-card-row .cat {
+  font-size: 13px;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.obcina-card-row .pct {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  font-size: 13px;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+}
+.obcina-card-row[data-bucket="green"]  .pct { background: rgba(16, 185, 129, 0.16); color: #047857; }
+.obcina-card-row[data-bucket="yellow"] .pct { background: rgba(234, 179, 8, 0.20);  color: #854d0e; }
+.obcina-card-row[data-bucket="orange"] .pct { background: rgba(249, 115, 22, 0.20); color: #9a3412; }
+.obcina-card-row[data-bucket="red"]    .pct { background: rgba(239, 68, 68, 0.18);  color: #991b1b; }
+
+[data-theme="dark"] .obcina-card-row[data-bucket="green"]  .pct { color: #5eead4; }
+[data-theme="dark"] .obcina-card-row[data-bucket="yellow"] .pct { color: #fde047; }
+[data-theme="dark"] .obcina-card-row[data-bucket="orange"] .pct { color: #fdba74; }
+[data-theme="dark"] .obcina-card-row[data-bucket="red"]    .pct { color: #fca5a5; }
 
 /* ────────────────────────────────────────────────────────────────────────
    Loading banner + dummy-data warning

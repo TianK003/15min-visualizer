@@ -9,6 +9,7 @@ import { GeoJsonLayer, IconLayer, TextLayer, ScatterplotLayer } from "@deck.gl/l
 import { H3HexagonLayer, TripsLayer } from "@deck.gl/geo-layers";
 import * as h3 from "h3-js";
 import Scorecard, { type RouteSet, type RoutePath } from "@/components/Scorecard";
+import ObcinaInfoCard, { type ObcinaInfo } from "@/components/ObcinaInfoCard";
 import AddressSearch, { type AddressSearchHandle } from "@/components/AddressSearch";
 import IzvorPodatkov from "@/components/IzvorPodatkov";
 import ChatBox from "@/components/ChatBox";
@@ -316,6 +317,11 @@ type ObcinaProps = {
   mean_score?: number;
   population?: number;
   n_cells?: number;
+  /** Per-category share (0–1) of population without 15-min access, baked by
+   *  `backend/etl/03_score_cells.py:aggregate_obcine`. Optional so the
+   *  frontend gracefully handles older obcine_scored.geojson outputs. */
+  walk_missing?: Record<string, number>;
+  bike_missing?: Record<string, number>;
 };
 
 // ---------- Permalink (G4) ----------
@@ -382,6 +388,9 @@ export default function SloveniaMap() {
   const [zoom, setZoom] = useState<number>(INITIAL_ZOOM);
   const [usingDummy, setUsingDummy] = useState<boolean>(false);
   const [selectedH3, setSelectedH3] = useState<string | null>(null);
+  // Občina-info card state: set on a click of the občina fill at low zoom,
+  // cleared by its own close button or by selecting a hex.
+  const [selectedObcina, setSelectedObcina] = useState<ObcinaInfo | null>(null);
   const [isoFeature, setIsoFeature] = useState<GeoJSON.Feature | null>(null);
   const [routeSet, setRouteSet] = useState<RouteSet | null>(null);
   const [amenityDots, setAmenityDots] = useState<AmenityForPoint[] | null>(null);
@@ -575,9 +584,13 @@ export default function SloveniaMap() {
   }, []);
 
   // Mirror selectedH3 into both the ref (for the closure-captured sync
-  // handler) and the URL hash.
+  // handler) and the URL hash. Also enforces mutual exclusion with the
+  // občina-info card — selecting a hex closes any open občina card,
+  // regardless of which code path set selectedH3 (map click, hash restore,
+  // address search, chat).
   useEffect(() => {
     selectedH3Ref.current = selectedH3;
+    if (selectedH3) setSelectedObcina(null);
     const map = mapRef.current;
     if (!map) return;
     const c = map.getCenter();
@@ -921,12 +934,34 @@ export default function SloveniaMap() {
     const dk = (c: Rgba): Rgba =>
       hexDark ? [Math.round(c[0] * 0.65), Math.round(c[1] * 0.65), Math.round(c[2] * 0.65), c[3]] : c;
 
+    // When the user has triggered a route or isochrone overlay, fade hex
+    // fills so the new overlay reads. Non-selected hexes drop alpha by 0.30
+    // (barely visible); the selected hex drops only 0.15 so it stays the
+    // anchor of the visible area. See plan §B for the alpha sanity table.
+    const routesActive = isoFeature !== null
+      || (routeSet !== null && routeSet.paths.length > 0);
+    const selectedAtCurrentRes = selectedH3
+      ? h3.cellToParent(selectedH3, currentRes)
+      : null;
+    const fade = (c: Rgba, delta: number): Rgba =>
+      delta === 0 ? c : [c[0], c[1], c[2], Math.max(0, Math.round(c[3] - delta * 255))];
+    const fadeDelta = (h3id: string): number =>
+      routesActive ? (h3id === selectedAtCurrentRes ? 0.15 : 0.30) : 0;
+    // Selection feedback for the občina-fill / investor-obcine layers: the
+    // clicked municipality gets its alpha bumped by 0.15 so it pops out from
+    // its neighbors. Identifier is OB_UIME (Slovenian občine all have unique
+    // names; cheaper than threading OB_ID through ObcinaProps).
+    const selectedObcinaName = selectedObcina?.OB_UIME ?? null;
+    const bumpAlpha = (c: Rgba, delta: number): Rgba =>
+      [c[0], c[1], c[2], Math.min(255, Math.max(0, Math.round(c[3] + delta * 255)))];
+
     const layers: Layer[] = [];
 
     // Unpopulated cells — painted first so they sit beneath all data layers.
     // Only relevant at hex zoom; below `SHOW_OBCINE_FILL_BELOW` the obcina
     // fill already covers Slovenia uniformly.
     if (!showObcineFill && aggregatedUnpop.length > 0) {
+      const unpopBase: Rgba = hexDark ? [138, 135, 122, 150] : UNPOP_COLOR;
       layers.push(
         new H3HexagonLayer<string>({
           id: "unpop-hex",
@@ -936,7 +971,10 @@ export default function SloveniaMap() {
           filled: true,
           extruded: false,
           getHexagon: (d) => d,
-          getFillColor: hexDark ? [138, 135, 122, 150] : UNPOP_COLOR,
+          // Unpop cells never match `selectedAtCurrentRes` (selection is over
+          // populated cells only), so they always take the full fade.
+          getFillColor: routesActive ? fade(unpopBase, 0.30) : unpopBase,
+          updateTriggers: { getFillColor: [routesActive, hexDark] },
         }),
       );
     }
@@ -954,12 +992,19 @@ export default function SloveniaMap() {
               const score = (mode === "bike" ? p.bike_mean : p.walk_mean) ?? p.mean_score ?? 0;
               const nCells = p.n_cells ?? 1;
               const d = (p.population ?? 0) * (1 - score / 8) / nCells;
-              return dk(colorForDemand(d, demandThresholds));
+              const base = dk(colorForDemand(d, demandThresholds));
+              return p.OB_UIME && p.OB_UIME === selectedObcinaName ? bumpAlpha(base, 0.15) : base;
             },
             getLineColor: [60, 60, 60, 200],
             lineWidthMinPixels: 1,
-            pickable: false,
-            updateTriggers: { getFillColor: [mode, demandThresholds, hexDark] },
+            pickable: true,
+            onClick: ({ object }) => {
+              const props = (object as GeoJSON.Feature<GeoJSON.Geometry, ObcinaProps> | null)?.properties;
+              if (!props) return;
+              setSelectedH3(null);
+              setSelectedObcina(props);
+            },
+            updateTriggers: { getFillColor: [mode, demandThresholds, hexDark, selectedObcinaName] },
           }),
         );
       } else {
@@ -981,11 +1026,16 @@ export default function SloveniaMap() {
             filled: true,
             extruded: false,
             getHexagon: (d) => d.h3,
-            getFillColor: (d) => dk(colorForDemand(mode === "walk" ? d.walkDemand : d.bikeDemand, demandThresholds)),
+            getFillColor: (d) => fade(
+              dk(colorForDemand(mode === "walk" ? d.walkDemand : d.bikeDemand, demandThresholds)),
+              fadeDelta(d.h3),
+            ),
             getLineColor: [255, 255, 255, 70],
             lineWidthUnits: "pixels",
             getLineWidth: 0.5,
-            updateTriggers: { getFillColor: [mode, demandThresholds, hexDark] },
+            updateTriggers: {
+              getFillColor: [mode, demandThresholds, hexDark, routesActive, selectedAtCurrentRes],
+            },
             onClick: ({ object }) => {
               if (!object) return;
               if (h3.getResolution(object.h3) >= H3_BASE_RES) {
@@ -1017,12 +1067,19 @@ export default function SloveniaMap() {
           getFillColor: (f) => {
             const p = f.properties ?? {};
             const v = (mode === "bike" ? p.bike_mean : p.walk_mean) ?? p.mean_score ?? 0;
-            return dk(colorForScore(v));
+            const base = dk(colorForScore(v));
+            return p.OB_UIME && p.OB_UIME === selectedObcinaName ? bumpAlpha(base, 0.15) : base;
           },
           getLineColor: [60, 60, 60, 200],
           lineWidthMinPixels: 1,
-          pickable: false,
-          updateTriggers: { getFillColor: [mode, hexDark] },
+          onClick: ({ object }) => {
+            const props = (object as GeoJSON.Feature<GeoJSON.Geometry, ObcinaProps> | null)?.properties;
+            if (!props) return;
+            setSelectedH3(null);
+            setSelectedObcina(props);
+          },
+          pickable: true,
+          updateTriggers: { getFillColor: [mode, hexDark, selectedObcinaName] },
         }),
       );
     } else {
@@ -1044,11 +1101,16 @@ export default function SloveniaMap() {
           filled: true,
           extruded: false,
           getHexagon: (d) => d.h3,
-          getFillColor: (d) => dk(colorForScore(mode === "bike" ? d.b : d.w)),
+          getFillColor: (d) => fade(
+            dk(colorForScore(mode === "bike" ? d.b : d.w)),
+            fadeDelta(d.h3),
+          ),
           getLineColor: [255, 255, 255, 70],
           lineWidthUnits: "pixels",
           getLineWidth: 0.5,
-          updateTriggers: { getFillColor: [aggregatedScores, mode, hexDark] },
+          updateTriggers: {
+            getFillColor: [aggregatedScores, mode, hexDark, routesActive, selectedAtCurrentRes],
+          },
           onClick: ({ object }) => {
             if (!object) return;
             const target =
@@ -1290,7 +1352,7 @@ export default function SloveniaMap() {
     }
 
     overlay.setProps({ layers, getTooltip: suggestionTooltip });
-  }, [aggregatedScores, aggregatedInvestorCells, aggregatedUnpop, demandThresholds, catScores, investorCat, groupedPins, cellsMap, showObcineFill, currentRes, view, isoFeature, routeSet, amenityDots, hoveredAmenity, mode, selectedH3, originLngLat, animatedPaths, animTime, theme]);
+  }, [aggregatedScores, aggregatedInvestorCells, aggregatedUnpop, demandThresholds, catScores, investorCat, groupedPins, cellsMap, showObcineFill, currentRes, view, isoFeature, routeSet, amenityDots, hoveredAmenity, mode, selectedH3, selectedObcina, originLngLat, animatedPaths, animTime, theme]);
 
   const suggestionTooltip = ({ object, layer }: { object?: unknown; layer?: { id: string } | null }) => {
     if (layer?.id !== "suggestions" || !object) return null;
@@ -1538,6 +1600,14 @@ export default function SloveniaMap() {
           if (!set) setHoveredAmenity(null);
         }}
       />
+
+      {selectedObcina && (
+        <ObcinaInfoCard
+          obcina={selectedObcina}
+          mode={mode}
+          onClose={() => setSelectedObcina(null)}
+        />
+      )}
 
       <div className="bottom-left-cluster">
         <ThemeToggle />
