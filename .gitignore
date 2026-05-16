@@ -48,3 +48,6 @@ data/15min-slo/tiles/
 backend/valhalla/tiles/
 backend/valhalla/custom_files/
 frontend/scripts/output/*.png
+
+.github/
+.claude-flow/
