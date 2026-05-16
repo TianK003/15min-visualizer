@@ -14,6 +14,10 @@ O »15-minutnih soseskah« — torej naseljih, kjer lahko vsakdanje obveznosti (
 
 Posamezne ocene niso bistvo. Karta je. **Šele ko pogledaš celotno državo na isti karti, vidiš sliko, ki je v razpravah o urejanju mest manjkala** — koliko Slovenije v resnici dosega standard 15-minutnih sosesk, kje so vrzeli največje in kje bi bil vpliv nove storitve največji. Prvič smo lahko jasno pokazali, da imajo le največja mesta — Ljubljana, Maribor, Celje, Kranj, Koper — predele s polno pokritostjo, medtem ko velika večina države dnevne obveznosti pogojuje z avtom.
 
+![Arhitektura](./data/readme/architecture.png)
+
+Arhitekturna zasnova načrtovane metodologije
+
 ### Kaj naredi ta projekt drugače
 
 - **Cela Slovenija, ne vzorec.** 212 občin, 1,08 milijona celic, vsaka povezljiva z izvirnimi podatki.
