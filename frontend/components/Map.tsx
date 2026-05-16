@@ -277,10 +277,10 @@ const UNPOP_COLOR: Rgba = [212, 207, 188, 150];
 // reads for color-blind users and at a glance. Alpha 170 (~67 %) gives strong
 // data presence without fully hiding the Positron basemap underneath.
 function colorForDemand(demand: number, t: DemandThresholds): Rgba {
-  if (demand >= t.p90) return [253, 231, 37, 128];   // bright yellow — visok
-  if (demand >= t.p75) return [53, 183, 121, 128];   // green — srednji
-  if (demand >= t.p50) return [49, 104, 142, 128];   // teal-blue — nizek
-  return [68, 1, 84, 128];                            // dark purple — zanemarljiv
+  if (demand >= t.p90) return [253, 231, 37, 102];   // bright yellow — visok
+  if (demand >= t.p75) return [53, 183, 121, 102];   // green — srednji
+  if (demand >= t.p50) return [49, 104, 142, 102];   // teal-blue — nizek
+  return [68, 1, 84, 102];                            // dark purple — zanemarljiv
 }
 
 function colorForScore(score: number): Rgba {
