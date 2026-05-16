@@ -1411,3 +1411,177 @@ button { font-family: inherit; }
   color: var(--text-primary) !important;
   border-color: var(--border-glass) !important;
 }
+
+/* ────────────────────────────────────────────────────────────────────────
+   AI svetovalec — top-right floating card with accordion result list.
+   Sits at top-right above the legend toggle.
+   ──────────────────────────────────────────────────────────────────────── */
+.ai-card {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  width: 360px;
+  max-width: calc(100vw - 32px);
+  z-index: 25;
+  background: var(--surface-glass-strong);
+  backdrop-filter: var(--blur);
+  -webkit-backdrop-filter: var(--blur);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  font: inherit;
+  font-size: 13px;
+  color: var(--text-primary);
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 32px);
+  overflow: hidden;
+}
+.ai-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px 8px;
+  border-bottom: 1px solid var(--border-glass);
+}
+.ai-card-title { font-weight: 600; }
+.ai-card-close {
+  border: 0;
+  background: transparent;
+  font-size: 18px;
+  line-height: 1;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  padding: 0 4px;
+}
+.ai-card-close:hover { color: var(--text-primary); }
+
+.ai-card-input {
+  display: flex;
+  gap: 6px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-glass);
+}
+.ai-card-input textarea {
+  flex: 1;
+  resize: none;
+  padding: 8px 10px;
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-md);
+  background: var(--surface-glass-strong);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 13px;
+  min-height: 38px;
+  max-height: 120px;
+}
+.ai-card-input textarea:focus { outline: 2px solid var(--accent); border-color: var(--accent); }
+.ai-card-input button {
+  align-self: flex-end;
+  padding: 8px 14px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--text-primary);
+  color: var(--bg);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 500;
+}
+.ai-card-input button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.ai-card-empty,
+.ai-card-loading,
+.ai-card-error {
+  padding: 18px 14px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+.ai-card-error { color: var(--danger); }
+.ai-card-loading { animation: ai-shimmer 1.4s ease-in-out infinite; }
+@keyframes ai-shimmer { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }
+
+.ai-card-results { padding: 8px 0 6px; overflow-y: auto; }
+.ai-card-reply {
+  padding: 8px 14px 4px;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+.ai-card-summary {
+  padding: 0 14px 8px;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  border-bottom: 1px solid var(--border-glass);
+}
+.ai-card-list { list-style: none; margin: 0; padding: 0; }
+.ai-card-row { border-bottom: 1px solid var(--border-glass); transition: background 100ms ease; }
+.ai-card-row:last-child { border-bottom: 0; }
+.ai-card-row.highlight { background: var(--accent-soft); }
+.ai-card-row-head {
+  display: grid;
+  grid-template-columns: 24px 1fr auto 18px;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  padding: 10px 14px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text-primary);
+  text-align: left;
+}
+.ai-card-row-head:hover { background: var(--accent-soft); }
+.ai-card-rank {
+  display: inline-block;
+  width: 22px; height: 22px; line-height: 22px;
+  border-radius: 50%;
+  background: var(--text-primary);
+  color: var(--bg);
+  text-align: center;
+  font-size: 11px;
+  font-weight: 600;
+}
+.ai-card-place { font-weight: 500; }
+.ai-card-score {
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  font-size: 11px;
+  font-weight: 600;
+  color: white;
+}
+.ai-card-score.score-g { background: #10b981; }
+.ai-card-score.score-y { background: #eab308; }
+.ai-card-score.score-o { background: #f97316; }
+.ai-card-score.score-r { background: #ef4444; }
+.ai-card-chevron { color: var(--text-tertiary); font-size: 10px; }
+
+.ai-card-row-body {
+  padding: 4px 14px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 12px;
+}
+.ai-card-meta { color: var(--text-secondary); }
+.ai-card-cats {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 4px 8px;
+}
+.ai-card-cat { font-size: 11px; color: var(--text-secondary); }
+.ai-card-cat.ok { color: #10b981; }
+.ai-card-cat.miss { color: var(--text-tertiary); }
+.ai-card-demo { font-size: 11px; color: var(--text-tertiary); }
+.ai-card-zoom {
+  align-self: flex-start;
+  padding: 6px 12px;
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-pill);
+  background: var(--surface-glass-strong);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.ai-card-zoom:hover { background: var(--accent-soft); }
