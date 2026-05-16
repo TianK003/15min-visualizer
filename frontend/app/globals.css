@@ -1432,7 +1432,9 @@ button { font-family: inherit; }
   background: var(--surface-glass-strong);
   backdrop-filter: var(--blur);
   -webkit-backdrop-filter: var(--blur);
-  color: var(--accent);
+  /* var(--text-primary) is dark in light theme, light in dark theme — gives
+     a black icon on light backgrounds and white on dark, per user spec. */
+  color: var(--text-primary);
   border: 1px solid var(--border-glass);
   border-radius: 50%;
   padding: 0;
@@ -1441,13 +1443,13 @@ button { font-family: inherit; }
   transition: border-color 140ms ease, transform 140ms ease, box-shadow 140ms ease, color 140ms ease;
 }
 .ai-card-fab:hover {
-  color: var(--accent-strong);
+  color: var(--text-primary);
   border-color: var(--border-strong);
   transform: translateY(-1px);
   box-shadow: var(--shadow-lg);
 }
 .ai-card-fab:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--text-primary);
   outline-offset: 2px;
 }
 .ai-card-fab svg { width: 22px; height: 22px; }
@@ -1517,7 +1519,7 @@ button { font-family: inherit; }
   min-height: 38px;
   max-height: 120px;
 }
-.ai-card-input textarea:focus { outline: 2px solid var(--accent); border-color: var(--accent); }
+.ai-card-input textarea:focus { outline: 2px solid var(--text-primary); border-color: var(--text-primary); }
 .ai-card-input button {
   align-self: flex-end;
   padding: 8px 14px;
@@ -1589,8 +1591,11 @@ button { font-family: inherit; }
   padding: 2px 8px;
   border-radius: var(--radius-pill);
   font-size: 11px;
-  font-weight: 600;
-  color: white;
+  font-weight: 700;
+  /* Fixed dark text — the badge backgrounds are bright saturated colors that
+     don't change with theme, so white-on-yellow (#eab308) failed legibility
+     for the score-5 yellow bucket. Dark text gives WCAG AAA on every bucket. */
+  color: #1a1f2c;
 }
 .ai-card-score.score-g { background: #10b981; }
 .ai-card-score.score-y { background: #eab308; }

@@ -198,7 +198,6 @@ function ResultBody({
   return (
     <div className="ai-card-results">
       <div className="ai-card-reply">{data.reply_text_sl}</div>
-      <div className="ai-card-summary">{data.filter_summary}</div>
       <ul className="ai-card-list">
         {data.results.map((r, idx) => (
           <ResultRow
@@ -249,22 +248,10 @@ function ResultRow(
 }
 
 function ResultRowDetail({ r, onZoom }: { r: SearchResult; onZoom: () => void }) {
-  const CATS = ["Trgovina","Izobraževanje","Zdravstvo","Park","Promet","Šport","Storitve","Delo"];
   return (
     <div className="ai-card-row-body">
       <div className="ai-card-meta">
         Občina {r.obcina_name} · {Math.round(r.population).toLocaleString("sl-SI")} prebivalcev
-      </div>
-      <div className="ai-card-cats">
-        {CATS.map((label, i) => {
-          const t = r.walk_min[i];
-          const ok = t !== null && t !== undefined && t <= 15;
-          return (
-            <span key={i} className={`ai-card-cat${ok ? " ok" : " miss"}`}>
-              {ok ? "✓" : "✗"} {label}
-            </span>
-          );
-        })}
       </div>
       {(r.el65 !== null || r.kids !== null) && (
         <div className="ai-card-demo">
