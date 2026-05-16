@@ -7,6 +7,8 @@ import { MapboxOverlay } from "@deck.gl/mapbox";
 import type { Layer } from "@deck.gl/core";
 import { GeoJsonLayer, TextLayer, ScatterplotLayer } from "@deck.gl/layers";
 import { H3HexagonLayer, TripsLayer } from "@deck.gl/geo-layers";
+import { H3GradientMeshLayer } from "@/lib/H3GradientMeshLayer";
+import { buildGradientMesh } from "@/lib/gradientMesh";
 import * as h3 from "h3-js";
 import Scorecard, { type RouteSet, type RoutePath } from "@/components/Scorecard";
 import AddressSearch, { type AddressSearchHandle } from "@/components/AddressSearch";
@@ -362,6 +364,7 @@ export default function SloveniaMap() {
   const [routeSet, setRouteSet] = useState<RouteSet | null>(null);
   const [amenityDots, setAmenityDots] = useState<AmenityForPoint[] | null>(null);
   const [hoveredAmenity, setHoveredAmenity] = useState<AmenityForPoint | null>(null);
+  const [hoveredCell, setHoveredCell] = useState<string | null>(null);
   const [provenanceOpen, setProvenanceOpen] = useState(false);
   const [mode, setMode] = useState<Mode>("walk");
   // When set, the Scorecard routes from this exact point instead of the cell
@@ -558,6 +561,18 @@ export default function SloveniaMap() {
     [cells, currentRes, showObcineFill],
   );
 
+  // Triangle-fan gradient mesh — paints each H3 cell as 6 triangles whose
+  // corner colors are blended from the cell's neighbors (see lib/gradientMesh.ts).
+  // Skip the (~150–400 ms) build when not actually rendering it: only the
+  // 15-min hex view at high zoom uses it; obcina-fill / investor view don't.
+  const gradientMesh = useMemo(
+    () =>
+      !showObcineFill && view === "15min"
+        ? buildGradientMesh(aggregatedScores, mode)
+        : { positions: new Float32Array(), colors: new Uint8Array(), vertexCount: 0 },
+    [aggregatedScores, mode, showObcineFill, view],
+  );
+
   // Synthesize the H3 cells covering Slovenia's unpopulated geography
   // (forests / ridges / lakes — areas the Kontur population grid skips).
   //
@@ -565,7 +580,7 @@ export default function SloveniaMap() {
   // cellToChildren over the unpopulated set ⇒ several million h3 ops total).
   // Running it inside a useMemo means it executes synchronously during render
   // and blocks the main thread for multiple seconds the first time `pops`
-  // lands. We move it to a useEffect with double-rAF scheduling so the
+  // lands. We move it to a useEffect with setTimeout scheduling so the
   // "Nalagam podatke …" banner paints first; `unpopComputing` is the gate.
   const [unpopCells, setUnpopCells] = useState<string[]>([]);
   const [unpopComputing, setUnpopComputing] = useState(false);
@@ -912,19 +927,26 @@ export default function SloveniaMap() {
           getLineColor: [80, 80, 80, 160],
           pickable: false,
         }),
+        new H3GradientMeshLayer({
+          id: "scores-gradient",
+          positions: gradientMesh.positions,
+          colors: gradientMesh.colors,
+          vertexCount: gradientMesh.vertexCount,
+          pickable: false,
+        }),
         new H3HexagonLayer<ScoreCell>({
-          id: "scores",
+          id: "scores-pick",
           data: aggregatedScores,
-          pickable: true, // click-only (no onHover) — perf hit acceptable
-          stroked: true,
+          pickable: true,
+          stroked: false,
+          // filled: true is required — deck.gl needs the polygon for picking
+          // geometry even though we make it transparent below.
           filled: true,
           extruded: false,
           getHexagon: (d) => d.h3,
-          getFillColor: (d) => dk(colorForScore(mode === "bike" ? d.b : d.w)),
-          getLineColor: [255, 255, 255, 70],
-          lineWidthUnits: "pixels",
-          getLineWidth: 0.5,
-          updateTriggers: { getFillColor: [aggregatedScores, mode, hexDark] },
+          // Invisible — the H3GradientMeshLayer above paints the visible
+          // colors. This layer only exists for picking (hover + click).
+          getFillColor: [0, 0, 0, 0],
           onClick: ({ object }) => {
             if (!object) return;
             // Convert aggregated h3 to a representative res-10 child for
@@ -938,36 +960,51 @@ export default function SloveniaMap() {
             setOriginFromAddress(false);
             setSelectedH3(target);
           },
+          onHover: ({ object }) => setHoveredCell(object?.h3 ?? null),
+        }),
+        new ScatterplotLayer<{ h3: string }>({
+          id: "hover-dot",
+          data: hoveredCell ? [{ h3: hoveredCell }] : [],
+          getPosition: (d) => {
+            const [lat, lng] = h3.cellToLatLng(d.h3);
+            return [lng, lat];
+          },
+          getRadius: 5,
+          radiusUnits: "pixels",
+          radiusMinPixels: 4,
+          getFillColor: [255, 255, 255, 220],
+          stroked: true,
+          getLineColor: [17, 24, 39, 220],
+          lineWidthMinPixels: 1.5,
+          pickable: false,
         }),
       );
 
-      // Selected-cell highlight: a second H3HexagonLayer painted on top of
-      // the score layer with full-alpha fill + thick dark border so the
-      // user can pick the clicked cell out of the heatmap at a glance.
+      // Selected-cell highlight: stroke-only outline to complement the
+      // gradient mesh without obscuring it. The user can pick the clicked
+      // cell out of the map at a glance via the dark 2.5px border.
       // Rendered at the *current aggregated resolution*, not res-10, so it
       // visually matches the surrounding score cells.
       if (selectedH3) {
         const parent = h3.cellToParent(selectedH3, currentRes);
-        const matchingScore = aggregatedScores.find((c) => c.h3 === parent);
-        const score = matchingScore
-          ? (mode === "bike" ? matchingScore.b : matchingScore.w)
-          : 4;
-        const [hr, hg, hb] = dk(colorForScore(score));
         layers.push(
           new H3HexagonLayer<{ h3: string }>({
             id: "selected-hex",
             data: [{ h3: parent }],
             getHexagon: (d) => d.h3,
             stroked: true,
-            filled: true,
+            filled: false,
             extruded: false,
-            getFillColor: [hr, hg, hb, 182],
+            // Theme-aware border so the selected cell pops against the
+            // current basemap: dark border on light maps, light border on
+            // dark maps. (Stroke-only — the gradient mesh underneath
+            // remains visible inside the selected cell.)
             getLineColor: theme === "dark" ? [17, 24, 39, 255] : [255, 255, 255, 255],
             getLineWidth: 2.5,
             lineWidthUnits: "pixels",
             lineWidthMinPixels: 2.5,
             pickable: false,
-            updateTriggers: { getFillColor: [score, hexDark], getLineColor: [theme] },
+            updateTriggers: { getLineColor: [theme] },
           }),
         );
       }
