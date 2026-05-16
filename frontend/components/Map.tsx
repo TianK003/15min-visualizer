@@ -163,9 +163,9 @@ const OBCINE_URL = REMOTE_DATA
 const SCORES_URL = REMOTE_DATA
   ? `${STORAGE}/cells/cell_scores_lite.json`
   : "/data/cell_scores_lite.json";
-const POPULATION_URL = REMOTE_DATA
-  ? `${STORAGE}/overlays/cell_population_lite.json`
-  : "/data/cell_population_lite.json";
+const DEMAND_URL = REMOTE_DATA
+  ? `${STORAGE}/cells/cell_demand_lite.json`
+  : "/data/cell_demand_lite.json";
 
 const SLOVENIA_CENTER: [number, number] = [14.99, 46.15];
 const INITIAL_ZOOM = 7.5;
@@ -186,7 +186,8 @@ export type Mode = "walk" | "bike";
 
 /** Score JSON shape: {h3, w, b} — walk & bike scores baked together. */
 type ScoreCell = { h3: string; w: number; b: number };
-type PopCell = { h3: string; pop: number };
+/** Pre-baked investor demand row — population included for category-filter recompute. */
+type DemandRow = { h3: string; wd: number; bd: number; p: number };
 type DemandCell = { h3: string; walkDemand: number; bikeDemand: number };
 type DemandThresholds = { p50: number; p75: number; p90: number };
 
@@ -359,8 +360,9 @@ export default function SloveniaMap() {
   const [cells, setCells] = useState<ScoreCell[]>([]);
   const [cellsLoading, setCellsLoading] = useState(true);
   const [cellsError, setCellsError] = useState<string | null>(null);
-  const [pops, setPops] = useState<PopCell[]>([]);
-  const [popsLoading, setPopsLoading] = useState(false);
+  const [demandCells, setDemandCells] = useState<DemandRow[]>([]);
+  const [demandLoading, setDemandLoading] = useState(false);
+  const [demandError, setDemandError] = useState<string | null>(null);
   // Cached obcine GeoJSON — used client-side to synthesize the H3 cells over
   // unpopulated parts of Slovenia. Browser HTTP cache deduplicates with the
   // deck.gl GeoJsonLayer fetch.
@@ -441,28 +443,33 @@ export default function SloveniaMap() {
     return () => { cancelled = true; };
   }, []);
 
-  // Lazy-load population on first switch. Deps deliberately omit popsLoading.
+  // Lazy-load pre-baked investor demand on first switch. Replaces the old
+  // heavy browser-side compute (populatedRes9 loops + demand formula) with a
+  // simple JSON fetch + cheap .map(). Deps deliberately omit demandLoading.
   useEffect(() => {
-    if (view !== "investor" || pops.length > 0) return;
+    if (view !== "investor" || demandCells.length > 0) return;
     let cancelled = false;
-    setPopsLoading(true);
-    (async () => {
-      try {
-        const res = await fetch(POPULATION_URL);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data: PopCell[] = await res.json();
-        if (!cancelled) setPops(data);
-      } catch (err) {
-        // eslint-disable-next-line no-console
-        console.warn("Population fetch failed:", err);
-      } finally {
-        if (!cancelled) setPopsLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [view, pops.length]);
+    setDemandLoading(true);
+    setDemandError(null);
+    fetch(DEMAND_URL)
+      .then(async (r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status} ${r.statusText || ""}`.trim());
+        return r.json();
+      })
+      .then((data: unknown) => {
+        if (cancelled) return;
+        if (!Array.isArray(data)) throw new Error("Neveljaven format podatkov");
+        setDemandCells(data as DemandRow[]);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn("Demand fetch failed:", err);
+        setDemandError(msg);
+      })
+      .finally(() => { if (!cancelled) setDemandLoading(false); });
+    return () => { cancelled = true; };
+  }, [view, demandCells.length]);
 
   // Lazy-load per-category scores when investor category filter is first used.
   useEffect(() => {
@@ -581,21 +588,22 @@ export default function SloveniaMap() {
   const [unpopComputing, setUnpopComputing] = useState(false);
 
   useEffect(() => {
-    if (!obcineFC || cells.length === 0 || pops.length === 0) {
+    if (!obcineFC || cells.length === 0) {
       setUnpopCells([]);
       setUnpopComputing(false);
       return;
     }
     let cancelled = false;
     setUnpopComputing(true);
-    // setTimeout (a macrotask) — unlike rAF — is guaranteed to run AFTER the
-    // browser has had a chance to paint. So the "Nalagam podatke …" banner
-    // (driven by setUnpopComputing above) appears on screen BEFORE this
-    // synchronous compute starts blocking the main thread.
+    // setTimeout (macrotask) guarantees the banner paints before this blocks.
+    // Starts at app load (no longer gated on investor switch or pops fetch) so
+    // the heavy polygonToCells work runs in the background while the user
+    // browses the default view — likely done before they ever click "Investitor".
     const id = setTimeout(() => {
       if (cancelled) return;
       const populatedRes10 = new Set(cells.map((c) => c.h3));
-      const populatedRes9 = new Set(pops.map((p) => p.h3));
+      // Derive populated res-9 from cells directly — avoids dependency on pops.
+      const populatedRes9 = new Set(cells.map((c) => h3.cellToParent(c.h3, 9)));
       const sloveniaRes9 = new Set<string>();
       for (const f of obcineFC.features) {
         const geom = f.geometry;
@@ -624,7 +632,7 @@ export default function SloveniaMap() {
       cancelled = true;
       clearTimeout(id);
     };
-  }, [obcineFC, cells, pops]);
+  }, [obcineFC, cells]);
 
   // Aggregate unpopulated cells to currentRes so they match the on-screen hex
   // size of the score / investor data they sit underneath. At res-10 itself
@@ -676,72 +684,40 @@ export default function SloveniaMap() {
     return Array.from(map.values());
   }, [suggestionPins]);
 
-  // Per-cell investor demand (population × unmet share). Heavy: 1 M cells, and
-  // before this refactor we called h3.cellToParent twice per cell. Same
-  // double-rAF defer as unpopCells, plus we cache the parent lookup so the
-  // compute runs ~half as long. `investorComputing` is the gate.
+  // Derive investorCells from pre-baked demand. Base case (no category filter)
+  // is instant — wd/bd already computed. Category filter requires h3.cellToParent
+  // per cell (~2s); defer with setTimeout so the banner paints first.
   const [investorCells, setInvestorCells] = useState<DemandCell[]>([]);
   const [investorComputing, setInvestorComputing] = useState(false);
 
   useEffect(() => {
-    if (cells.length === 0 || pops.length === 0) {
-      setInvestorCells([]);
-      setInvestorComputing(false);
+    if (!Array.isArray(demandCells) || demandCells.length === 0) { setInvestorCells([]); return; }
+
+    if (investorCat === null || catScores.size === 0) {
+      // Pre-baked values, no h3 ops — effectively instant.
+      setInvestorCells(
+        demandCells.map((d) => ({ h3: d.h3, walkDemand: d.wd, bikeDemand: d.bd })),
+      );
       return;
     }
+
+    // Category filter: cellToParent per cell → defer so banner shows first.
     let cancelled = false;
     setInvestorComputing(true);
-    // See unpopCells effect above — setTimeout (a macrotask) is the reliable
-    // way to ensure the banner paints before the synchronous compute starts.
     const id = setTimeout(() => {
       if (cancelled) return;
-      // Cache cellToParent once per cell — the old useMemo called it twice
-      // (childCount + demand loops), so this roughly halves the h3 work.
-      const parents: string[] = new Array(cells.length);
-      for (let i = 0; i < cells.length; i++) {
-        parents[i] = h3.cellToParent(cells[i].h3, 9);
-      }
-
-      const popMap = new Map(pops.map((p) => [p.h3, p.pop]));
-      const childCount = new Map<string, number>();
-      for (let i = 0; i < cells.length; i++) {
-        const p9 = parents[i];
-        childCount.set(p9, (childCount.get(p9) ?? 0) + 1);
-      }
-
-      const out: DemandCell[] = new Array(cells.length);
-      for (let i = 0; i < cells.length; i++) {
-        const c = cells[i];
-        const p9 = parents[i];
-        const parentPop = popMap.get(p9) ?? 0;
-        const pop = parentPop > 0 ? parentPop / (childCount.get(p9) ?? 1) : 0;
-
-        let demand = 0;
-        if (investorCat !== null && catScores.size > 0) {
-          const catArr = catScores.get(p9);
-          if (catArr) {
-            const present = catArr[investorCat];
-            demand = present >= 1 ? 0 : pop * (1 - present);
-          }
-          out[i] = { h3: c.h3, walkDemand: demand, bikeDemand: demand };
-        } else {
-          out[i] = {
-            h3: c.h3,
-            walkDemand: pop * (1 - c.w / 8),
-            bikeDemand: pop * (1 - c.b / 8),
-          };
-        }
-      }
-      if (!cancelled) {
-        setInvestorCells(out);
-        setInvestorComputing(false);
-      }
+      const out: DemandCell[] = demandCells.map((d) => {
+        const p9 = h3.cellToParent(d.h3, 9);
+        const catArr = catScores.get(p9);
+        if (!catArr) return { h3: d.h3, walkDemand: 0, bikeDemand: 0 };
+        const present = catArr[investorCat];
+        const demand = present >= 1 ? 0 : d.p * (1 - present);
+        return { h3: d.h3, walkDemand: demand, bikeDemand: demand };
+      });
+      if (!cancelled) { setInvestorCells(out); setInvestorComputing(false); }
     }, 50);
-    return () => {
-      cancelled = true;
-      clearTimeout(id);
-    };
-  }, [cells, pops, investorCat, catScores]);
+    return () => { cancelled = true; clearTimeout(id); };
+  }, [demandCells, investorCat, catScores]);
 
   const aggregatedInvestorCells = useMemo(
     () => (showObcineFill ? [] : aggregateDemand(investorCells, currentRes)),
@@ -1354,7 +1330,6 @@ export default function SloveniaMap() {
                 <span className="legend-swatch" style={{ background: "rgb(68,1,84)" }} />
                 Zanemarljiv
               </div>
-              {popsLoading && <div className="legend-loading">nalagam …</div>}
             </div>
           )}
         </div>
@@ -1439,9 +1414,8 @@ export default function SloveniaMap() {
       {provenanceOpen && <IzvorPodatkov onClose={() => setProvenanceOpen(false)} />}
 
       {(cellsLoading ||
-        (view === "investor" && (
-          popsLoading ||
-          pops.length === 0 ||
+        (view === "investor" && !demandError && (
+          demandLoading ||
           unpopCells.length === 0 ||
           investorCells.length === 0 ||
           unpopComputing ||
@@ -1455,6 +1429,13 @@ export default function SloveniaMap() {
       {usingDummy && cellsError && (
         <div className="banner">
           Podatki s strežnika niso dosegljivi ({cellsError}). Prikazane so vzorčne celice.
+        </div>
+      )}
+
+      {view === "investor" && demandError && (
+        <div className="banner" role="alert">
+          Napaka pri nalaganju podatkov za investitorja ({demandError}). Poskusi
+          osvežiti stran ali preklopi na potrošniški pogled.
         </div>
       )}
 
