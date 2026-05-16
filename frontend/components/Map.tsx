@@ -7,8 +7,6 @@ import { MapboxOverlay } from "@deck.gl/mapbox";
 import type { Layer } from "@deck.gl/core";
 import { GeoJsonLayer, TextLayer, ScatterplotLayer } from "@deck.gl/layers";
 import { H3HexagonLayer, TripsLayer } from "@deck.gl/geo-layers";
-import { H3GradientMeshLayer } from "@/lib/H3GradientMeshLayer";
-import { buildGradientMesh } from "@/lib/gradientMesh";
 import * as h3 from "h3-js";
 import Scorecard, { type RouteSet, type RoutePath } from "@/components/Scorecard";
 import AddressSearch, { type AddressSearchHandle } from "@/components/AddressSearch";
@@ -364,7 +362,6 @@ export default function SloveniaMap() {
   const [routeSet, setRouteSet] = useState<RouteSet | null>(null);
   const [amenityDots, setAmenityDots] = useState<AmenityForPoint[] | null>(null);
   const [hoveredAmenity, setHoveredAmenity] = useState<AmenityForPoint | null>(null);
-  const [hoveredCell, setHoveredCell] = useState<string | null>(null);
   const [provenanceOpen, setProvenanceOpen] = useState(false);
   const [mode, setMode] = useState<Mode>("walk");
   // When set, the Scorecard routes from this exact point instead of the cell
@@ -559,18 +556,6 @@ export default function SloveniaMap() {
   const aggregatedScores = useMemo(
     () => (showObcineFill ? [] : aggregateMean(cells, currentRes)),
     [cells, currentRes, showObcineFill],
-  );
-
-  // Triangle-fan gradient mesh — paints each H3 cell as 6 triangles whose
-  // corner colors are blended from the cell's neighbors (see lib/gradientMesh.ts).
-  // Skip the (~150–400 ms) build when not actually rendering it: only the
-  // 15-min hex view at high zoom uses it; obcina-fill / investor view don't.
-  const gradientMesh = useMemo(
-    () =>
-      !showObcineFill && view === "15min"
-        ? buildGradientMesh(aggregatedScores, mode)
-        : { positions: new Float32Array(), colors: new Uint8Array(), vertexCount: 0 },
-    [aggregatedScores, mode, showObcineFill, view],
   );
 
   // Synthesize the H3 cells covering Slovenia's unpopulated geography
@@ -927,56 +912,29 @@ export default function SloveniaMap() {
           getLineColor: [80, 80, 80, 160],
           pickable: false,
         }),
-        new H3GradientMeshLayer({
-          id: "scores-gradient",
-          positions: gradientMesh.positions,
-          colors: gradientMesh.colors,
-          vertexCount: gradientMesh.vertexCount,
-          pickable: false,
-        }),
         new H3HexagonLayer<ScoreCell>({
-          id: "scores-pick",
+          id: "scores",
           data: aggregatedScores,
           pickable: true,
-          stroked: false,
-          // filled: true is required — deck.gl needs the polygon for picking
-          // geometry even though we make it transparent below.
+          stroked: true,
           filled: true,
           extruded: false,
           getHexagon: (d) => d.h3,
-          // Invisible — the H3GradientMeshLayer above paints the visible
-          // colors. This layer only exists for picking (hover + click).
-          getFillColor: [0, 0, 0, 0],
+          getFillColor: (d) => dk(colorForScore(mode === "bike" ? d.b : d.w)),
+          getLineColor: [255, 255, 255, 70],
+          lineWidthUnits: "pixels",
+          getLineWidth: 0.5,
+          updateTriggers: { getFillColor: [aggregatedScores, mode, hexDark] },
           onClick: ({ object }) => {
             if (!object) return;
-            // Convert aggregated h3 to a representative res-10 child for
-            // scorecard fetch; if already res-10 use as-is.
             const target =
               h3.getResolution(object.h3) >= H3_BASE_RES
                 ? object.h3
                 : h3.cellToChildren(object.h3, H3_BASE_RES)[0];
-            // Tile click drops any address anchor — route from cell centroid.
             setOriginLngLat(null);
             setOriginFromAddress(false);
             setSelectedH3(target);
           },
-          onHover: ({ object }) => setHoveredCell(object?.h3 ?? null),
-        }),
-        new ScatterplotLayer<{ h3: string }>({
-          id: "hover-dot",
-          data: hoveredCell ? [{ h3: hoveredCell }] : [],
-          getPosition: (d) => {
-            const [lat, lng] = h3.cellToLatLng(d.h3);
-            return [lng, lat];
-          },
-          getRadius: 5,
-          radiusUnits: "pixels",
-          radiusMinPixels: 4,
-          getFillColor: [255, 255, 255, 220],
-          stroked: true,
-          getLineColor: [17, 24, 39, 220],
-          lineWidthMinPixels: 1.5,
-          pickable: false,
         }),
       );
 
