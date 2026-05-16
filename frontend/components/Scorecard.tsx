@@ -84,14 +84,23 @@ export default function Scorecard({
     (async () => {
       try {
         const [lat, lng] = origin;
-        const [c, walkAm, bikeAm] = await Promise.all([
+        // Fetch the 15-min isochrone alongside cell + amenity data so the
+        // scorecard never renders before the polygon is known. Category
+        // clicks downstream filter routes through visibleAmenities, which
+        // applies the iso polygon as soon as it's set — guarantees no
+        // path is ever drawn to an amenity outside the 15-min envelope.
+        const [c, walkAm, bikeAm, walkIso, bikeIso] = await Promise.all([
           cellScore(h3id),
           amenitiesForPoint(lat, lng, "pedestrian").catch(() => [] as AmenityForPoint[]),
           amenitiesForPoint(lat, lng, "bicycle").catch(() => [] as AmenityForPoint[]),
+          isochrone({ lat, lng, minutes: 15, costing: "pedestrian" }).catch(() => null),
+          isochrone({ lat, lng, minutes: 15, costing: "bicycle" }).catch(() => null),
         ]);
         if (!cancelled) {
           setCell(c);
           setAmenities({ walk: walkAm, bike: bikeAm });
+          setIsos({ walk: walkIso, bike: bikeIso });
+          setIsoFetched(true);
         }
       } catch (err) {
         if (!cancelled) {
@@ -122,12 +131,27 @@ export default function Scorecard({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [h3id, origin]);
 
+  // Auto-dismiss the "ni dosegljivih lokacij" message after 3 s so the
+  // scorecard doesn't get stuck showing a Valhalla failure.
+  useEffect(() => {
+    if (error !== "ni dosegljivih lokacij") return;
+    const t = setTimeout(() => setError(null), 3000);
+    return () => clearTimeout(t);
+  }, [error]);
+
   // Filter both amenity sets to the user-centered iso polygon so the dots,
   // the <details> list, and the routes drawn on category-click stay in sync
   // with what the polygon visually says is "reachable in 15 min".
   const visibleAmenities = useMemo<AmenityByMode>(() => {
-    const filterOne = (set: AmenityForPoint[], iso: GeoJSON.Feature | null) =>
-      iso ? set.filter((a) => pointInFeature(a.lng, a.lat, iso)) : set;
+    const filterOne = (set: AmenityForPoint[], iso: GeoJSON.Feature | null) => {
+      // Hard 15-min ceiling first so routes never get drawn to amenities the
+      // scoreboard / isochrone consider out of range. The polygon filter
+      // (when an iso is loaded) tightens this further to the actual reachable
+      // footprint, but without it the time filter alone keeps everything in
+      // the 15-min envelope.
+      const byTime = set.filter((a) => a.walk_min <= 15);
+      return iso ? byTime.filter((a) => pointInFeature(a.lng, a.lat, iso)) : byTime;
+    };
     return {
       walk: filterOne(amenities.walk, isos.walk),
       bike: filterOne(amenities.bike, isos.bike),
@@ -286,7 +310,10 @@ export default function Scorecard({
                       data-cat={c.id}
                     >
                       <span className="ico" aria-hidden>{c.icon}</span>
-                      <span className="cat">{c.label}</span>
+                      <span className="cat">
+                        {c.label}
+                        <span className="cat-color" style={{ background: `rgb(${c.color[0]}, ${c.color[1]}, ${c.color[2]})` }} aria-hidden />
+                      </span>
                       <span className="check" aria-label={reachable ? "dosegljivo" : "nedosegljivo"}>
                         {isLoading ? "…" : reachable ? "✓" : "—"}
                       </span>

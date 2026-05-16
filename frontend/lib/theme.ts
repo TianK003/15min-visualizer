@@ -10,9 +10,8 @@ function getInitialTheme(): Theme {
     const attr = document.documentElement.getAttribute("data-theme");
     if (attr === "dark" || attr === "light") return attr;
   }
-  if (typeof window !== "undefined" && window.matchMedia?.("(prefers-color-scheme: dark)").matches) {
-    return "dark";
-  }
+  // Pre-paint script in layout.tsx always sets data-theme="light" on load,
+  // so reloads always start light. The toggle still works within a session.
   return "light";
 }
 
@@ -38,6 +37,22 @@ export function useTheme(): [Theme, (next: Theme) => void, () => void] {
       // localStorage can throw under private-browsing quotas. Fine to ignore —
       // the DOM attribute still drives styling for the current session.
     }
+  }, [theme]);
+
+  // Each call to useTheme owns its own React state, but the DOM attribute on
+  // <html> is the single source of truth. Observe attribute flips so a flip
+  // from one consumer (e.g. ThemeToggle) propagates into every other
+  // consumer's state (e.g. Map.tsx, which needs to re-fire setStyle).
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const obs = new MutationObserver(() => {
+      const attr = document.documentElement.getAttribute("data-theme");
+      if ((attr === "dark" || attr === "light") && attr !== theme) {
+        setThemeState(attr);
+      }
+    });
+    obs.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+    return () => obs.disconnect();
   }, [theme]);
 
   const setTheme = (next: Theme) => setThemeState(next);

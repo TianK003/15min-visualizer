@@ -115,20 +115,19 @@ export default function IzvorPodatkov({ onClose }: Props) {
         <h3>Tehnične podrobnosti</h3>
         <ul>
           <li>
-            <a href="/api-docs"><b>REST API — Swagger UI</b></a> · Next.js poti (
-            <code>/api/llm</code>, <code>/api/valhalla</code>) + tabele Supabase
-          </li>
-          <li>
             <a href="/openapi.json" target="_blank" rel="noopener noreferrer">
-              OpenAPI 3.1 spec (JSON) ↗
+              <b>OpenAPI 3.1 spec ↗</b>
             </a>{" "}
-            · ročno vzdrževana specifikacija za Next.js poti
+            · ročno vzdrževana specifikacija — pokriva <code>/api/llm</code>,
+            <code>/api/valhalla/{"{endpoint}"}</code> ter Supabase poti za
+            <code>cell_scores</code>, <code>obcine</code>, <code>amenities</code> in RPC
+            <code>amenities_for_point</code> in <code>llm_search_cells</code>
           </li>
           <li>
             <a href={`${SUPABASE_URL}/rest/v1/`} target="_blank" rel="noopener noreferrer">
               Supabase PostgREST spec ↗
             </a>{" "}
-            · samodejno generirano iz shema migracij
+            · samodejno generirano iz shema migracij (rezerva za potrditev v živo)
           </li>
           <li>
             GitHub commit{" "}

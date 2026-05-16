@@ -54,6 +54,55 @@ function filterAlreadyExcludesParking(filter: unknown): boolean {
   return JSON.stringify(filter).includes(JSON.stringify(NO_PARKING_CLAUSE));
 }
 
+const DARK_MAP_FACTOR = 0.55;
+
+function parseRgb(s: string): [number, number, number, number?] | null {
+  if (typeof s !== "string") return null;
+  const t = s.trim();
+  if (t.startsWith("#")) {
+    const hex = t.slice(1);
+    if (hex.length === 3) return [parseInt(hex[0]+hex[0],16), parseInt(hex[1]+hex[1],16), parseInt(hex[2]+hex[2],16)];
+    if (hex.length === 6) return [parseInt(hex.slice(0,2),16), parseInt(hex.slice(2,4),16), parseInt(hex.slice(4,6),16)];
+    if (hex.length === 8) return [parseInt(hex.slice(0,2),16), parseInt(hex.slice(2,4),16), parseInt(hex.slice(4,6),16), parseInt(hex.slice(6,8),16)/255];
+    return null;
+  }
+  const m = t.match(/^rgba?\(\s*([\d.]+)\s*[,\s]\s*([\d.]+)\s*[,\s]\s*([\d.]+)(?:\s*[,/]\s*([\d.]+))?\s*\)/i);
+  if (m) return [+m[1], +m[2], +m[3], m[4] != null ? +m[4] : undefined];
+  return null;
+}
+
+function darkenPaintValue(v: unknown, factor: number): unknown {
+  if (typeof v === "string") {
+    const rgb = parseRgb(v);
+    if (!rgb) return v;
+    const [r, g, b, a] = rgb;
+    const dr = Math.round(r * factor), dg = Math.round(g * factor), db = Math.round(b * factor);
+    return a != null ? `rgba(${dr},${dg},${db},${a})` : `rgb(${dr},${dg},${db})`;
+  }
+  if (Array.isArray(v)) return v.map((x) => darkenPaintValue(x, factor));
+  return v;
+}
+
+let darkBasemapCache: unknown = null;
+async function loadDarkBasemap(): Promise<unknown> {
+  if (darkBasemapCache) return darkBasemapCache;
+  const res = await fetch(BASEMAP_DARK);
+  const style = await res.json();
+  const SKIP = new Set(["text-color", "text-halo-color", "icon-color", "icon-halo-color"]);
+  for (const layer of style.layers ?? []) {
+    const paint = layer.paint as Record<string, unknown> | undefined;
+    if (!paint) continue;
+    for (const key of Object.keys(paint)) {
+      if (SKIP.has(key)) continue;
+      if (key === "background-color" || key.endsWith("-color")) {
+        paint[key] = darkenPaintValue(paint[key], DARK_MAP_FACTOR);
+      }
+    }
+  }
+  darkBasemapCache = style;
+  return darkBasemapCache;
+}
+
 function harmonizeBasemap(map: maplibregl.Map) {
   const style = map.getStyle();
   if (!style?.layers) return;
@@ -134,8 +183,8 @@ type DemandThresholds = { p50: number; p75: number; p90: number };
 function zoomToResolution(zoom: number): number {
   if (zoom < 10) return 6;
   if (zoom < 11) return 7;
-  if (zoom < 13) return 8;
-  if (zoom < 15) return 9;
+  if (zoom < 12) return 8;
+  if (zoom < 13.5) return 9;
   return 10;
 }
 
@@ -212,7 +261,7 @@ function approxMeters(a: [number, number], b: [number, number]): number {
 // 2.5 ms per meter, capped at 2 s — the user's stated ceiling. Closer
 // amenities animate faster; anything past ~800 m hits the cap.
 const MS_PER_METER = 2.5;
-const MAX_ANIM_MS = 2000;
+const MAX_ANIM_MS = 500;
 
 function buildAnimatedPaths(paths: RoutePath[]): { paths: AnimatedPath[]; maxDuration: number } {
   const out: AnimatedPath[] = [];
@@ -487,14 +536,18 @@ export default function SloveniaMap() {
     writeHash({ lng: c.lng, lat: c.lat, zoom: map.getZoom(), h3id: selectedH3 });
   }, [selectedH3]);
 
-  // Swap basemap when theme flips. MapboxOverlay (deck.gl/mapbox v9+) survives
-  // setStyle without re-attachment — deck layers persist as the new sprites
-  // and source tiles load.
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
-    const target = theme === "dark" ? BASEMAP_DARK : BASEMAP_LIGHT;
-    map.setStyle(target);
+    let cancelled = false;
+    if (theme === "dark") {
+      loadDarkBasemap()
+        .then((spec) => { if (!cancelled) map.setStyle(spec as maplibregl.StyleSpecification); })
+        .catch(() => { if (!cancelled) map.setStyle(BASEMAP_DARK); });
+    } else {
+      map.setStyle(BASEMAP_LIGHT);
+    }
+    return () => { cancelled = true; };
   }, [theme]);
 
   const showObcineFill = zoom < SHOW_OBCINE_FILL_BELOW;
@@ -507,37 +560,60 @@ export default function SloveniaMap() {
 
   // Synthesize the H3 cells covering Slovenia's unpopulated geography
   // (forests / ridges / lakes — areas the Kontur population grid skips).
-  // Strategy: run polygonToCells at res 9 over each obcina polygon, take the
-  // set difference against `pops` (which is exhaustive at res 9 for inhabited
-  // cells), then expand the leftover to res-10 children. Runs once when
-  // obcineFC + pops + cells are all loaded. ~250 k res-10 strings; sub-second.
-  const unpopCells = useMemo<string[]>(() => {
-    if (!obcineFC || cells.length === 0 || pops.length === 0) return [];
-    const populatedRes10 = new Set(cells.map((c) => c.h3));
-    const populatedRes9 = new Set(pops.map((p) => p.h3));
-    const sloveniaRes9 = new Set<string>();
-    for (const f of obcineFC.features) {
-      const geom = f.geometry;
-      const polys: number[][][][] =
-        geom.type === "Polygon" ? [geom.coordinates] :
-        geom.type === "MultiPolygon" ? geom.coordinates :
-        [];
-      for (const poly of polys) {
-        // GeoJSON uses [lng, lat]; h3-js polygonToCells in this project's
-        // generateDummyCells passes [lat, lng] pairs — match that.
-        const outer = poly[0].map(([lng, lat]) => [lat, lng] as [number, number]);
-        for (const c of h3.polygonToCells(outer, 9)) sloveniaRes9.add(c);
-      }
+  //
+  // This compute is heavy (~212 občina polygons × polygonToCells at res 9 plus
+  // cellToChildren over the unpopulated set ⇒ several million h3 ops total).
+  // Running it inside a useMemo means it executes synchronously during render
+  // and blocks the main thread for multiple seconds the first time `pops`
+  // lands. We move it to a useEffect with double-rAF scheduling so the
+  // "Nalagam podatke …" banner paints first; `unpopComputing` is the gate.
+  const [unpopCells, setUnpopCells] = useState<string[]>([]);
+  const [unpopComputing, setUnpopComputing] = useState(false);
+
+  useEffect(() => {
+    if (!obcineFC || cells.length === 0 || pops.length === 0) {
+      setUnpopCells([]);
+      setUnpopComputing(false);
+      return;
     }
-    const out: string[] = [];
-    for (const p9 of sloveniaRes9) {
-      if (populatedRes9.has(p9)) continue;
-      for (const c of h3.cellToChildren(p9, H3_BASE_RES)) {
-        // Defensive — a cell ending up in both would render twice.
-        if (!populatedRes10.has(c)) out.push(c);
+    let cancelled = false;
+    setUnpopComputing(true);
+    // setTimeout (a macrotask) — unlike rAF — is guaranteed to run AFTER the
+    // browser has had a chance to paint. So the "Nalagam podatke …" banner
+    // (driven by setUnpopComputing above) appears on screen BEFORE this
+    // synchronous compute starts blocking the main thread.
+    const id = setTimeout(() => {
+      if (cancelled) return;
+      const populatedRes10 = new Set(cells.map((c) => c.h3));
+      const populatedRes9 = new Set(pops.map((p) => p.h3));
+      const sloveniaRes9 = new Set<string>();
+      for (const f of obcineFC.features) {
+        const geom = f.geometry;
+        const polys: number[][][][] =
+          geom.type === "Polygon" ? [geom.coordinates] :
+          geom.type === "MultiPolygon" ? geom.coordinates :
+          [];
+        for (const poly of polys) {
+          const outer = poly[0].map(([lng, lat]) => [lat, lng] as [number, number]);
+          for (const c of h3.polygonToCells(outer, 9)) sloveniaRes9.add(c);
+        }
       }
-    }
-    return out;
+      const out: string[] = [];
+      for (const p9 of sloveniaRes9) {
+        if (populatedRes9.has(p9)) continue;
+        for (const c of h3.cellToChildren(p9, H3_BASE_RES)) {
+          if (!populatedRes10.has(c)) out.push(c);
+        }
+      }
+      if (!cancelled) {
+        setUnpopCells(out);
+        setUnpopComputing(false);
+      }
+    }, 50);
+    return () => {
+      cancelled = true;
+      clearTimeout(id);
+    };
   }, [obcineFC, cells, pops]);
 
   // Aggregate unpopulated cells to currentRes so they match the on-screen hex
@@ -590,44 +666,71 @@ export default function SloveniaMap() {
     return Array.from(map.values());
   }, [suggestionPins]);
 
-  const investorCells = useMemo<DemandCell[]>(() => {
-    if (pops.length === 0 || cells.length === 0) return [];
-    // Population is at res-9; distribute evenly across res-10 children.
-    const popMap = new Map(pops.map((p) => [p.h3, p.pop]));
-    const childCount = new Map<string, number>();
-    for (const c of cells) {
-      const p9 = h3.cellToParent(c.h3, 9);
-      childCount.set(p9, (childCount.get(p9) ?? 0) + 1);
-    }
-    const out: DemandCell[] = [];
-    // Every cell in `cells` is emitted exactly once. Cases that previously
-    // dropped a cell (zero population, missing catScores row, category
-    // already fully present) now emit `demand = 0`, which `colorForDemand`
-    // maps to the "zanemarljivo" bucket. This keeps Slovenia's populated
-    // footprint visually filled even where there's no investment upside.
-    for (const c of cells) {
-      const p9 = h3.cellToParent(c.h3, 9);
-      const parentPop = popMap.get(p9) ?? 0;
-      const pop = parentPop > 0 ? parentPop / (childCount.get(p9) ?? 1) : 0;
+  // Per-cell investor demand (population × unmet share). Heavy: 1 M cells, and
+  // before this refactor we called h3.cellToParent twice per cell. Same
+  // double-rAF defer as unpopCells, plus we cache the parent lookup so the
+  // compute runs ~half as long. `investorComputing` is the gate.
+  const [investorCells, setInvestorCells] = useState<DemandCell[]>([]);
+  const [investorComputing, setInvestorComputing] = useState(false);
 
-      let demand = 0;
-      if (investorCat !== null && catScores.size > 0) {
-        const catArr = catScores.get(p9);
-        if (catArr) {
-          const present = catArr[investorCat];
-          // present >= 1 → fully served → no remaining demand → 0 by design.
-          demand = present >= 1 ? 0 : pop * (1 - present);
-        }
-        out.push({ h3: c.h3, walkDemand: demand, bikeDemand: demand });
-      } else {
-        out.push({
-          h3: c.h3,
-          walkDemand: pop * (1 - c.w / 8),
-          bikeDemand: pop * (1 - c.b / 8),
-        });
-      }
+  useEffect(() => {
+    if (cells.length === 0 || pops.length === 0) {
+      setInvestorCells([]);
+      setInvestorComputing(false);
+      return;
     }
-    return out;
+    let cancelled = false;
+    setInvestorComputing(true);
+    // See unpopCells effect above — setTimeout (a macrotask) is the reliable
+    // way to ensure the banner paints before the synchronous compute starts.
+    const id = setTimeout(() => {
+      if (cancelled) return;
+      // Cache cellToParent once per cell — the old useMemo called it twice
+      // (childCount + demand loops), so this roughly halves the h3 work.
+      const parents: string[] = new Array(cells.length);
+      for (let i = 0; i < cells.length; i++) {
+        parents[i] = h3.cellToParent(cells[i].h3, 9);
+      }
+
+      const popMap = new Map(pops.map((p) => [p.h3, p.pop]));
+      const childCount = new Map<string, number>();
+      for (let i = 0; i < cells.length; i++) {
+        const p9 = parents[i];
+        childCount.set(p9, (childCount.get(p9) ?? 0) + 1);
+      }
+
+      const out: DemandCell[] = new Array(cells.length);
+      for (let i = 0; i < cells.length; i++) {
+        const c = cells[i];
+        const p9 = parents[i];
+        const parentPop = popMap.get(p9) ?? 0;
+        const pop = parentPop > 0 ? parentPop / (childCount.get(p9) ?? 1) : 0;
+
+        let demand = 0;
+        if (investorCat !== null && catScores.size > 0) {
+          const catArr = catScores.get(p9);
+          if (catArr) {
+            const present = catArr[investorCat];
+            demand = present >= 1 ? 0 : pop * (1 - present);
+          }
+          out[i] = { h3: c.h3, walkDemand: demand, bikeDemand: demand };
+        } else {
+          out[i] = {
+            h3: c.h3,
+            walkDemand: pop * (1 - c.w / 8),
+            bikeDemand: pop * (1 - c.b / 8),
+          };
+        }
+      }
+      if (!cancelled) {
+        setInvestorCells(out);
+        setInvestorComputing(false);
+      }
+    }, 50);
+    return () => {
+      cancelled = true;
+      clearTimeout(id);
+    };
   }, [cells, pops, investorCat, catScores]);
 
   const aggregatedInvestorCells = useMemo(
@@ -688,6 +791,12 @@ export default function SloveniaMap() {
     const overlay = overlayRef.current;
     if (!overlay) return;
 
+    // In dark mode, pull all hex fill RGB values down to 65 % so they sit
+    // naturally on the darkened basemap without washing it out.
+    const hexDark = theme === "dark";
+    const dk = (c: Rgba): Rgba =>
+      hexDark ? [Math.round(c[0] * 0.65), Math.round(c[1] * 0.65), Math.round(c[2] * 0.65), c[3]] : c;
+
     const layers: Layer[] = [];
 
     // Unpopulated cells — painted first so they sit beneath all data layers.
@@ -703,7 +812,7 @@ export default function SloveniaMap() {
           filled: true,
           extruded: false,
           getHexagon: (d) => d,
-          getFillColor: UNPOP_COLOR,
+          getFillColor: hexDark ? [138, 135, 122, 150] : UNPOP_COLOR,
         }),
       );
     }
@@ -721,12 +830,12 @@ export default function SloveniaMap() {
               const score = (mode === "bike" ? p.bike_mean : p.walk_mean) ?? p.mean_score ?? 0;
               const nCells = p.n_cells ?? 1;
               const d = (p.population ?? 0) * (1 - score / 8) / nCells;
-              return colorForDemand(d, demandThresholds);
+              return dk(colorForDemand(d, demandThresholds));
             },
             getLineColor: [60, 60, 60, 200],
             lineWidthMinPixels: 1,
             pickable: false,
-            updateTriggers: { getFillColor: [mode, demandThresholds] },
+            updateTriggers: { getFillColor: [mode, demandThresholds, hexDark] },
           }),
         );
       } else {
@@ -748,11 +857,11 @@ export default function SloveniaMap() {
             filled: true,
             extruded: false,
             getHexagon: (d) => d.h3,
-            getFillColor: (d) => colorForDemand(mode === "walk" ? d.walkDemand : d.bikeDemand, demandThresholds),
+            getFillColor: (d) => dk(colorForDemand(mode === "walk" ? d.walkDemand : d.bikeDemand, demandThresholds)),
             getLineColor: [255, 255, 255, 70],
             lineWidthUnits: "pixels",
             getLineWidth: 0.5,
-            updateTriggers: { getFillColor: [mode, demandThresholds] },
+            updateTriggers: { getFillColor: [mode, demandThresholds, hexDark] },
             onClick: ({ object }) => {
               if (!object) return;
               if (h3.getResolution(object.h3) >= H3_BASE_RES) {
@@ -783,15 +892,13 @@ export default function SloveniaMap() {
           filled: true,
           getFillColor: (f) => {
             const p = f.properties ?? {};
-            // Pick the mode-appropriate mean; fall back to legacy `mean_score`
-            // (pre-bike-rescore obcine files) so loading old data still renders.
             const v = (mode === "bike" ? p.bike_mean : p.walk_mean) ?? p.mean_score ?? 0;
-            return colorForScore(v);
+            return dk(colorForScore(v));
           },
           getLineColor: [60, 60, 60, 200],
           lineWidthMinPixels: 1,
           pickable: false,
-          updateTriggers: { getFillColor: mode },
+          updateTriggers: { getFillColor: [mode, hexDark] },
         }),
       );
     } else {
@@ -813,11 +920,11 @@ export default function SloveniaMap() {
           filled: true,
           extruded: false,
           getHexagon: (d) => d.h3,
-          getFillColor: (d) => colorForScore(mode === "bike" ? d.b : d.w),
+          getFillColor: (d) => dk(colorForScore(mode === "bike" ? d.b : d.w)),
           getLineColor: [255, 255, 255, 70],
           lineWidthUnits: "pixels",
           getLineWidth: 0.5,
-          updateTriggers: { getFillColor: [aggregatedScores, mode] },
+          updateTriggers: { getFillColor: [aggregatedScores, mode, hexDark] },
           onClick: ({ object }) => {
             if (!object) return;
             // Convert aggregated h3 to a representative res-10 child for
@@ -845,7 +952,7 @@ export default function SloveniaMap() {
         const score = matchingScore
           ? (mode === "bike" ? matchingScore.b : matchingScore.w)
           : 4;
-        const [hr, hg, hb] = colorForScore(score);
+        const [hr, hg, hb] = dk(colorForScore(score));
         layers.push(
           new H3HexagonLayer<{ h3: string }>({
             id: "selected-hex",
@@ -854,13 +961,13 @@ export default function SloveniaMap() {
             stroked: true,
             filled: true,
             extruded: false,
-            getFillColor: [hr, hg, hb, 220],
-            getLineColor: [17, 24, 39, 255],
+            getFillColor: [hr, hg, hb, 182],
+            getLineColor: theme === "dark" ? [17, 24, 39, 255] : [255, 255, 255, 255],
             getLineWidth: 2.5,
             lineWidthUnits: "pixels",
             lineWidthMinPixels: 2.5,
             pickable: false,
-            updateTriggers: { getFillColor: [score] },
+            updateTriggers: { getFillColor: [score, hexDark], getLineColor: [theme] },
           }),
         );
       }
@@ -892,11 +999,7 @@ export default function SloveniaMap() {
           getTimestamps: (d) => d.timestamps,
           getColor: PATH_RGBA,
           currentTime: animTime,
-          // Huge trail so segments never fade after being revealed — once
-          // the head reaches the amenity, the entire trail stays painted.
           trailLength: 1e9,
-          // Thicker stroke + larger minPixels smooths the look at any zoom;
-          // jointRounded/capRounded already do the round-off on joins & ends.
           getWidth: 6,
           widthUnits: "pixels",
           widthMinPixels: 5,
@@ -904,6 +1007,25 @@ export default function SloveniaMap() {
           capRounded: true,
           pickable: false,
           updateTriggers: { getColor: [routeSet.categoryId] },
+        }),
+        // Spark head: a short bright-white trail (80 ms window) that rides
+        // the leading edge of each path. TripsLayer fades linearly from full
+        // opacity at currentTime → transparent at currentTime-trailLength,
+        // creating a glowing comet tip that disappears behind the main trail.
+        new TripsLayer<AnimatedPath>({
+          id: "routes-spark",
+          data: animatedPaths.paths,
+          getPath: (d) => d.waypoints,
+          getTimestamps: (d) => d.timestamps,
+          getColor: [255, 255, 255, 245],
+          currentTime: animTime,
+          trailLength: 80,
+          getWidth: 3,
+          widthUnits: "pixels",
+          widthMinPixels: 2,
+          jointRounded: true,
+          capRounded: true,
+          pickable: false,
         }),
       );
     }
@@ -1048,7 +1170,7 @@ export default function SloveniaMap() {
     }
 
     overlay.setProps({ layers, getTooltip: suggestionTooltip });
-  }, [aggregatedScores, aggregatedInvestorCells, aggregatedUnpop, demandThresholds, catScores, investorCat, groupedPins, cellsMap, showObcineFill, currentRes, view, isoFeature, routeSet, amenityDots, hoveredAmenity, mode, selectedH3, originLngLat, animatedPaths, animTime]);
+  }, [aggregatedScores, aggregatedInvestorCells, aggregatedUnpop, demandThresholds, catScores, investorCat, groupedPins, cellsMap, showObcineFill, currentRes, view, isoFeature, routeSet, amenityDots, hoveredAmenity, mode, selectedH3, originLngLat, animatedPaths, animTime, theme]);
 
   const suggestionTooltip = ({ object, layer }: { object?: unknown; layer?: { id: string } | null }) => {
     if (layer?.id !== "suggestions" || !object) return null;
@@ -1082,6 +1204,21 @@ export default function SloveniaMap() {
     };
   };
 
+  // View switcher must close the scorecard first if it's open. Switching while
+  // a cell is selected leaves stale iso polygons / category routes / amenity
+  // dots layered over the new view's data, which looks broken.
+  const switchView = (next: View) => {
+    if (next === view) return;
+    if (selectedH3) {
+      if (originFromAddress) addressSearchRef.current?.clear();
+      setSelectedH3(null);
+      setHoveredAmenity(null);
+      setOriginLngLat(null);
+      setOriginFromAddress(false);
+    }
+    setView(next);
+  };
+
   const flyToCoord = (lng: number, lat: number, targetZoom = 14, fromAddress = false) => {
     const map = mapRef.current;
     if (!map) return;
@@ -1107,7 +1244,7 @@ export default function SloveniaMap() {
           <button
             type="button"
             className={view === "15min" ? "active" : ""}
-            onClick={() => setView("15min")}
+            onClick={() => switchView("15min")}
             aria-pressed={view === "15min"}
           >
             Potrošnik
@@ -1115,7 +1252,7 @@ export default function SloveniaMap() {
           <button
             type="button"
             className={view === "investor" ? "active" : ""}
-            onClick={() => setView("investor")}
+            onClick={() => switchView("investor")}
             aria-pressed={view === "investor"}
           >
             Investitor
@@ -1290,7 +1427,15 @@ export default function SloveniaMap() {
       </div>
       {provenanceOpen && <IzvorPodatkov onClose={() => setProvenanceOpen(false)} />}
 
-      {cellsLoading && (
+      {(cellsLoading ||
+        (view === "investor" && (
+          popsLoading ||
+          pops.length === 0 ||
+          unpopCells.length === 0 ||
+          investorCells.length === 0 ||
+          unpopComputing ||
+          investorComputing
+        ))) && (
         <div className="loading-banner" role="status" aria-live="polite">
           Nalagam podatke …
         </div>

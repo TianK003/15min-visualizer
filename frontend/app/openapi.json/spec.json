@@ -1,0 +1,747 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "15min Slovenija — REST API",
+    "version": "1.0.0",
+    "summary": "Vse javne končne točke aplikacije 15min Slovenija — ročno spisane Next.js poti (LLM, Valhalla) in ključne Supabase PostgREST poti (tabele + RPC).",
+    "description": "## Vsebina\n\nTa dokument pokriva **dva sklopa** končnih točk:\n\n1. **Next.js poti** (`/api/llm`, `/api/valhalla/{endpoint}`) — ročno spisane v `frontend/app/api/`. Te poti zavijejo storitve tretjih oseb (OpenRouter LLM, Valhalla routing) in tečejo v Node.js runtime znotraj Next.js aplikacije.\n2. **Supabase PostgREST poti** (`/rest/v1/...`) — samodejno generirane iz SQL migracij v `backend/supabase/migrations/`. Pokrivajo tabele `cell_scores`, `obcine`, `amenities` ter RPC funkcije `amenities_for_point` in `llm_search_cells`. Vse poti so namenjene **samo branju** in zahtevajo `apikey` glavo z anonimnim Supabase ključem.\n\n## Avtentikacija\n\n- **Next.js poti**: same-origin (klici iz brskalnika na istem hostu); brez dodatne avtentikacije.\n- **Supabase PostgREST poti**: zahtevajo glavi `apikey: <ANON_KEY>` in `Authorization: Bearer <ANON_KEY>`. Anonimni ključ je javen; RLS na strani Supabase omogoča samo branje.\n\n## Bazni naslovi\n\n- Next.js: relativno (`/api/...`) — vedno isti host kot frontend.\n- Supabase: `NEXT_PUBLIC_SUPABASE_URL` (lokalno `/sb` → `http://127.0.0.1:54321`, v produkciji javni Supabase URL).",
+    "contact": {
+      "name": "15min Slovenija",
+      "url": "https://github.com/TianK003/15minut"
+    },
+    "license": {
+      "name": "Apache 2.0",
+      "url": "https://www.apache.org/licenses/LICENSE-2.0"
+    }
+  },
+  "servers": [
+    {
+      "url": "/",
+      "description": "Same-origin (lokalni dev strežnik ali produkcijska namestitev)"
+    }
+  ],
+  "tags": [
+    {
+      "name": "LLM",
+      "description": "OpenRouter — iskanje po opisu življenjske situacije in narativ za posamezno celico."
+    },
+    {
+      "name": "Valhalla",
+      "description": "Strežniški proxy za Valhalla routing — obhod CORS preflight (Valhalla vrne 405 na OPTIONS)."
+    },
+    {
+      "name": "Supabase — Tabele",
+      "description": "Samo-bralni dostop do glavnih podatkovnih tabel preko PostgREST. Format poizvedb in filtrov je standardni PostgREST (`eq.`, `in.`, `select=`, `limit=` itd. — glej https://postgrest.org/en/stable/references/api.html)."
+    },
+    {
+      "name": "Supabase — RPC",
+      "description": "Strežniško shranjene PL/pgSQL funkcije, klicane preko `POST /rest/v1/rpc/{funkcija}`."
+    }
+  ],
+  "paths": {
+    "/api/llm": {
+      "post": {
+        "tags": ["LLM"],
+        "summary": "Iskanje po opisu situacije ali narativ za posamezno celico",
+        "description": "Ločeno po polju `kind` v telesu zahteve.\n\n**`kind: \"search\"`** — sprejme prosto-tekstovni slovenski opis življenjske situacije (npr. *\"Sva družina, oba delava v Ljubljani, otrok je v vrtcu, iščeva stanovanje blizu zelene površine\"*) in po želji prejšnje obrate pogovora. Kliče OpenRouter, da preslika situacijo na (a) podmnožico 8 kategorij, (b) ciljno mesto. Mesto nato geocodira preko Photona, razširi v `h3.gridDisk` (~5–7 km), in poišče najboljše celice preko Supabase RPC `llm_search_cells`. Vrne slovenski povzetek, eno-vrstični povzetek filtra, korake sklepanja in vrh celic.\n\n**`kind: \"narrative\"`** — vrne kratek slovenski opis za specifično celico glede na njeno oceno in `walk_min[]`. Trenutno determinističen — OpenRouter pripeti predviden za SLO4D.",
+        "operationId": "postLlm",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  { "$ref": "#/components/schemas/LlmSearchRequest" },
+                  { "$ref": "#/components/schemas/LlmNarrativeRequest" }
+                ],
+                "discriminator": { "propertyName": "kind" }
+              },
+              "examples": {
+                "search": {
+                  "summary": "Iskanje — \"mlada družina, delo v Ljubljani in Mariboru\"",
+                  "value": {
+                    "kind": "search",
+                    "query": "Sva mlada družina in delava v Ljubljani in Mariboru — kje bi bilo dobro živeti?",
+                    "history": []
+                  }
+                },
+                "search-with-history": {
+                  "summary": "Iskanje — sledilno vprašanje, ki prečisti prejšnji odgovor",
+                  "value": {
+                    "kind": "search",
+                    "query": "In še bližje vrtcu prosim",
+                    "history": [
+                      { "role": "user", "content": "Družina z malim otrokom, delo v Ljubljani" },
+                      { "role": "assistant", "content": "Predlagam območje okoli Domžal …" }
+                    ]
+                  }
+                },
+                "narrative": {
+                  "summary": "Narativ za posamezno celico (stub)",
+                  "value": {
+                    "kind": "narrative",
+                    "h3": "8a1e1216b367fff",
+                    "score": 7,
+                    "walk_min": [5, 8, 6, 4, 3, 10, 9, null],
+                    "obcina": "Ljubljana",
+                    "unbuildable": false
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK — diskriminator na polju `kind` v odgovoru.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    { "$ref": "#/components/schemas/LlmSearchResponse" },
+                    { "$ref": "#/components/schemas/LlmNarrativeResponse" }
+                  ],
+                  "discriminator": { "propertyName": "kind" }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Napačen zahtevek — telo ni veljaven JSON ali `kind` ne ustreza diskriminatorju.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorBody" },
+                "example": { "error": "Body must be JSON" }
+              }
+            }
+          },
+          "422": {
+            "description": "Validacija sheme ni uspela. `issues` vsebuje seznam Zod napak.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ZodErrorBody" }
+              }
+            }
+          },
+          "500": {
+            "description": "Napaka v zaledni storitvi — OpenRouter neuspeh, JSON parse napaka ali Supabase RPC neuspeh.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorBody" }
+              }
+            }
+          },
+          "501": {
+            "description": "`OPENROUTER_API_KEY` ni nastavljen v okolju strežnika. Vrnjeno pred kakršnimkoli klicem navzgor.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorBody" },
+                "example": { "error": "Missing OPENROUTER_API_KEY. Please set it in .env" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/valhalla/{endpoint}": {
+      "post": {
+        "tags": ["Valhalla"],
+        "summary": "Proxy zahteva na Valhalla routing engine",
+        "description": "Telo zahteve neposredno posreduje na Valhalla container (lokalno `http://127.0.0.1:8002`, na Railway javni URL). Obstaja, ker Valhalla vrne 405 na CORS OPTIONS preflight, kar prepreči direktne klice iz brskalnika.\n\nBeli seznam dovoljenih končnih točk: `isochrone`, `route`, `locate`, `matrix`, `trace_route`. Status koda in `Content-Type` iz Valhalla se ohranita.\n\nFiksne hitrosti odjemalca (preko env): `walking_speed=4 km/h`, `cycling_speed=13 km/h`, profil za kolo uporablja `bicycle_type=Hybrid`.",
+        "operationId": "postValhalla",
+        "parameters": [
+          {
+            "name": "endpoint",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": ["isochrone", "route", "locate", "matrix", "trace_route"]
+            },
+            "description": "Ena izmed podprtih Valhalla končnih točk. Karkoli drugega vrne 400."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/ValhallaRequest" },
+              "examples": {
+                "isochrone-walk": {
+                  "summary": "15-min izokron za pešca na Prešernovem trgu",
+                  "value": {
+                    "locations": [{ "lat": 46.0512, "lon": 14.5061 }],
+                    "costing": "pedestrian",
+                    "costing_options": { "pedestrian": { "walking_speed": 4 } },
+                    "contours": [{ "time": 15 }],
+                    "polygons": true
+                  }
+                },
+                "isochrone-bike": {
+                  "summary": "15-min izokron za kolesarja na Prešernovem trgu",
+                  "value": {
+                    "locations": [{ "lat": 46.0512, "lon": 14.5061 }],
+                    "costing": "bicycle",
+                    "costing_options": { "bicycle": { "bicycle_type": "Hybrid", "cycling_speed": 13 } },
+                    "contours": [{ "time": 15 }],
+                    "polygons": true
+                  }
+                },
+                "route": {
+                  "summary": "Pot pešca Prešernov trg → Tivoli",
+                  "value": {
+                    "locations": [
+                      { "lat": 46.0512, "lon": 14.5061 },
+                      { "lat": 46.0563, "lon": 14.4894 }
+                    ],
+                    "costing": "pedestrian",
+                    "costing_options": { "pedestrian": { "walking_speed": 4 } },
+                    "directions_options": { "units": "kilometers" }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Valhalla odgovor, posredovan kot je. Oblika je odvisna od `endpoint`-a: GeoJSON `FeatureCollection` za `isochrone`, `{ trip: { legs[] } }` za `route` itd.",
+            "content": {
+              "application/json": {
+                "schema": { "type": "object", "description": "Glej https://valhalla.github.io/valhalla/api/" }
+              }
+            }
+          },
+          "400": {
+            "description": "`endpoint` ni v belem seznamu.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorBody" },
+                "example": { "error": "Unknown endpoint foobar" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/rest/v1/cell_scores": {
+      "get": {
+        "tags": ["Supabase — Tabele"],
+        "summary": "Branje 15-min ocen za H3 celice",
+        "description": "Tabela `cell_scores` (resolucija H3 10, ~1 080 000 vrstic) vsebuje ocene 0–8 za hojo in kolesarjenje + dosegljive čase po kategorijah. Frontend uporablja filter `h3=eq.{id}` ob kliku na zemljevidu.\n\n**Filtri** so standardni PostgREST: `eq.`, `in.`, `gte.`, `lte.`, `like.` itd. **Format vračanja** posameznega zadetka (namesto enočlanskega seznama) sprožite z glavo `Accept: application/vnd.pgrst.object+json`.",
+        "operationId": "getCellScores",
+        "parameters": [
+          {
+            "name": "h3",
+            "in": "query",
+            "description": "Filter po H3 indeksu. Primer: `eq.8a1e1216b367fff`",
+            "schema": { "type": "string" },
+            "example": "eq.8a1e1216b367fff"
+          },
+          {
+            "name": "walk_score",
+            "in": "query",
+            "description": "Filter po oceni hoje. Primer: `gte.6` ali `in.(6,7,8)`",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "bike_score",
+            "in": "query",
+            "description": "Filter po oceni kolesarjenja.",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "select",
+            "in": "query",
+            "description": "Seznam vrnjenih stolpcev, ločenih z vejico. Primer: `select=h3,walk_score,bike_score,walk_min,bike_min,population`",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": { "type": "integer", "default": 1000 }
+          },
+          {
+            "name": "apikey",
+            "in": "header",
+            "required": true,
+            "description": "Supabase anonimni ključ.",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": true,
+            "description": "`Bearer {ANON_KEY}` — isti ključ kot `apikey`.",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "Accept",
+            "in": "header",
+            "description": "`application/vnd.pgrst.object+json` za vračanje enega objekta namesto seznama.",
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Seznam celic (ali en sam objekt, če je nastavljen `Accept`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": { "$ref": "#/components/schemas/CellScoreRow" }
+                }
+              }
+            }
+          },
+          "401": { "description": "Manjkajoč ali neveljaven `apikey` / `Authorization`." },
+          "406": { "description": "PGRST116 — `Accept: vnd.pgrst.object+json` zahteval enega, vrnjenih 0 ali več." }
+        }
+      }
+    },
+    "/rest/v1/obcine": {
+      "get": {
+        "tags": ["Supabase — Tabele"],
+        "summary": "Branje meja občin",
+        "description": "Tabela `obcine` (212 vrstic) vsebuje uradne občinske poligone. Frontend načeloma uporablja statični GeoJSON `obcine_scored.geojson` (z dodanimi povprečji); ta tabela je rezerva za neposredne poizvedbe geometrije po imenu.",
+        "operationId": "getObcine",
+        "parameters": [
+          {
+            "name": "naziv",
+            "in": "query",
+            "description": "Filter po imenu občine. Primer: `eq.Ljubljana`",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "sifra",
+            "in": "query",
+            "description": "Filter po šifri občine.",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "select",
+            "in": "query",
+            "description": "Stolpci za vrnitev. Primer: `select=naziv,sifra,geom`",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "apikey",
+            "in": "header",
+            "required": true,
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Seznam občin.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": { "$ref": "#/components/schemas/ObcinaRow" }
+                }
+              }
+            }
+          },
+          "401": { "description": "Manjkajoč ali neveljaven anonimni ključ." }
+        }
+      }
+    },
+    "/rest/v1/amenities": {
+      "get": {
+        "tags": ["Supabase — Tabele"],
+        "summary": "Branje točk OSM dnevnih dobrin",
+        "description": "Tabela `amenities` (~37 600 vrstic) vsebuje vse točke OSM po kategorijah (`trgovina`, `izobrazevanje`, `zdravstvo`, `park`, `promet`, `sport`, `storitve`, `delo`). Frontend skoraj vedno pridobi le točke za določeno izhodišče preko RPC `amenities_for_point`; neposredna poizvedba je tu za splošno raziskovanje (npr. izvoz vseh trgovin).",
+        "operationId": "getAmenities",
+        "parameters": [
+          {
+            "name": "category",
+            "in": "query",
+            "description": "Filter po kategoriji. Primer: `eq.trgovina`",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "name",
+            "in": "query",
+            "description": "Filter po imenu (lahko `like.*Mercator*`).",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "select",
+            "in": "query",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": { "type": "integer" }
+          },
+          {
+            "name": "apikey",
+            "in": "header",
+            "required": true,
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Seznam dobrin.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": { "$ref": "#/components/schemas/AmenityRow" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/rest/v1/rpc/amenities_for_point": {
+      "post": {
+        "tags": ["Supabase — RPC"],
+        "summary": "Dobrine, dosegljive iz izhodiščne točke v 15 min",
+        "description": "PL/pgSQL funkcija, ki za izhodišče (`p_lat`, `p_lng`) izračuna seznam dobrin, ki so dosegljive v 15 minutah hoje ali kolesarjenja (`p_mode`). V ozadju se prostorsko preseka pred-bake-ana množica izokron (`amenity_isochrones`) s točko izhodišča — torej išče vse dobrine, **katerih 15-min izokron vsebuje izhodišče**. To je natanko inverz pristopa \"izokron iz izhodišča\" in se prilega že pre-baked podatkom v podatkovni bazi.\n\nRezultat: za vsako dobrino vrne kategorijo, ime, koordinati in čas hoje v minutah (najmanjši dosegljiv izokron).",
+        "operationId": "rpcAmenitiesForPoint",
+        "parameters": [
+          { "name": "apikey", "in": "header", "required": true, "schema": { "type": "string" } },
+          { "name": "Authorization", "in": "header", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/AmenitiesForPointArgs" },
+              "examples": {
+                "ljubljana-walk": {
+                  "summary": "Pešačenje iz Prešernovega trga",
+                  "value": { "p_lat": 46.0512, "p_lng": 14.5061, "p_mode": "pedestrian" }
+                },
+                "ljubljana-bike": {
+                  "summary": "Kolesarjenje iz Prešernovega trga",
+                  "value": { "p_lat": 46.0512, "p_lng": 14.5061, "p_mode": "bicycle" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Seznam dosegljivih dobrin.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": { "$ref": "#/components/schemas/AmenityForPointRow" }
+                }
+              }
+            }
+          },
+          "401": { "description": "Manjkajoč ali neveljaven anonimni ključ." }
+        }
+      }
+    },
+    "/rest/v1/rpc/llm_search_cells": {
+      "post": {
+        "tags": ["Supabase — RPC"],
+        "summary": "Iskanje H3 celic, ki ustrezajo filtru LLM",
+        "description": "PL/pgSQL funkcija, ki sprejme strukturiran `filter_spec` (rezultat parsiranja LLM-a) in vrne najboljše H3 celice po kompozitni oceni. Frontend kliče to funkcijo iz `/api/llm` ko uporabnik vnese opis življenjske situacije.\n\n**`filter_spec` polja**:\n- `required_category_indices` — seznam indeksov kategorij (0-7), ki morajo biti dosegljive\n- `h3_in` — neobvezna omejitev na regijo (npr. `h3.gridDisk` okoli mesta)\n\nRangiranje: celice, ki ustrezajo *vsem* zahtevanim kategorijam, dobijo najvišjo oceno; nato sledi populacija in skupna 15-min ocena.",
+        "operationId": "rpcLlmSearchCells",
+        "parameters": [
+          { "name": "apikey", "in": "header", "required": true, "schema": { "type": "string" } },
+          { "name": "Authorization", "in": "header", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/LlmSearchCellsArgs" },
+              "examples": {
+                "family-ljubljana": {
+                  "summary": "Družina, ki potrebuje trgovino + vrtec + javni promet okoli Ljubljane",
+                  "value": {
+                    "filter_spec": {
+                      "required_category_indices": [0, 1, 4],
+                      "h3_in": ["8a1e1216b367fff", "8a1e1216b36ffff"]
+                    },
+                    "p_limit": 5
+                  }
+                },
+                "all-slovenia": {
+                  "summary": "Brez geografske omejitve",
+                  "value": {
+                    "filter_spec": { "required_category_indices": [0, 2, 6] },
+                    "p_limit": 10
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Najbolje rangirane celice.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": { "$ref": "#/components/schemas/LlmSearchCellRow" }
+                }
+              }
+            }
+          },
+          "401": { "description": "Manjkajoč ali neveljaven anonimni ključ." }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ChatMessage": {
+        "type": "object",
+        "required": ["role", "content"],
+        "properties": {
+          "role": { "type": "string", "enum": ["user", "assistant"] },
+          "content": { "type": "string" }
+        }
+      },
+      "LlmSearchRequest": {
+        "type": "object",
+        "required": ["kind", "query"],
+        "properties": {
+          "kind": { "type": "string", "const": "search" },
+          "query": { "type": "string", "minLength": 1, "maxLength": 500, "description": "Prosto-tekstovni slovenski opis situacije." },
+          "history": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/ChatMessage" },
+            "description": "Prejšnji obrati pogovora (user + assistant). Filter-summary sporočila naj klicatelj izpusti."
+          }
+        }
+      },
+      "LlmNarrativeRequest": {
+        "type": "object",
+        "required": ["kind", "h3", "score", "walk_min"],
+        "properties": {
+          "kind": { "type": "string", "const": "narrative" },
+          "h3": { "type": "string", "minLength": 15, "maxLength": 15, "description": "H3 res-10 identifikator celice (15 hex znakov)." },
+          "score": { "type": "integer", "minimum": 0, "maximum": 8 },
+          "walk_min": {
+            "type": "array",
+            "minItems": 8,
+            "maxItems": 8,
+            "items": { "type": ["number", "null"] },
+            "description": "Minute hoje po kategorijah (vrstni red enak CATEGORIES v frontend/lib/categories.ts). `null` = ni dosegljivo v 15 min."
+          },
+          "obcina": { "type": "string", "nullable": true },
+          "unbuildable": { "type": "boolean" }
+        }
+      },
+      "LlmSearchResponse": {
+        "type": "object",
+        "required": ["kind", "reply_text_sl", "filter_summary", "reasoning", "top_cells"],
+        "properties": {
+          "kind": { "type": "string", "const": "search" },
+          "reply_text_sl": { "type": "string", "description": "Prijazen 2–4-stavčen slovenski povzetek." },
+          "filter_summary": { "type": "string", "description": "Eno-vrstični povzetek razčlenjenega filtra (kategorije + območje + število)." },
+          "reasoning": { "type": "string", "description": "Razlaga LLM-a po korakih (angleško — za razhroščevanje / preglednost)." },
+          "top_cells": {
+            "type": "array",
+            "description": "Najbolj rangirane H3 celice. Shema, ki jo vrne RPC `llm_search_cells`.",
+            "items": { "$ref": "#/components/schemas/LlmSearchCellRow" }
+          }
+        }
+      },
+      "LlmNarrativeResponse": {
+        "type": "object",
+        "required": ["kind", "text_sl"],
+        "properties": {
+          "kind": { "type": "string", "const": "narrative" },
+          "text_sl": { "type": "string", "description": "1–3 slovenski stavki, ki opisujejo profil dostopnosti celice." },
+          "stub": { "type": "boolean", "description": "`true`, dokler je odgovor determinističen (brez upstream LLM klica)." }
+        }
+      },
+      "ErrorBody": {
+        "type": "object",
+        "required": ["error"],
+        "properties": {
+          "error": { "type": "string" },
+          "details": { "type": "string", "description": "Neobvezno upstream telo napake (LLM ali RPC)." }
+        }
+      },
+      "ZodErrorBody": {
+        "allOf": [
+          { "$ref": "#/components/schemas/ErrorBody" },
+          {
+            "type": "object",
+            "properties": {
+              "issues": {
+                "type": "array",
+                "description": "Seznam Zod napak — glej https://zod.dev/?id=zodissue",
+                "items": { "type": "object" }
+              }
+            }
+          }
+        ]
+      },
+      "ValhallaLocation": {
+        "type": "object",
+        "required": ["lat", "lon"],
+        "properties": {
+          "lat": { "type": "number" },
+          "lon": { "type": "number" }
+        }
+      },
+      "ValhallaRequest": {
+        "type": "object",
+        "description": "Posredovano Valhalli kot je. Glej https://valhalla.github.io/valhalla/api/ za polno shemo na končno točko.",
+        "required": ["locations", "costing"],
+        "properties": {
+          "locations": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/ValhallaLocation" },
+            "minItems": 1
+          },
+          "costing": { "type": "string", "enum": ["pedestrian", "bicycle"] },
+          "costing_options": { "type": "object", "additionalProperties": true },
+          "contours": {
+            "type": "array",
+            "description": "Samo za `isochrone`.",
+            "items": {
+              "type": "object",
+              "properties": { "time": { "type": "number", "description": "Minute." } }
+            }
+          },
+          "polygons": { "type": "boolean", "description": "Samo za `isochrone` — vrni poligone." },
+          "directions_options": {
+            "type": "object",
+            "description": "Samo za `route`.",
+            "additionalProperties": true
+          }
+        }
+      },
+      "CellScoreRow": {
+        "type": "object",
+        "required": ["h3", "walk_score", "bike_score", "walk_min", "bike_min"],
+        "properties": {
+          "h3": { "type": "string", "description": "H3 res-10 identifikator (15 hex znakov)." },
+          "walk_score": { "type": "integer", "minimum": 0, "maximum": 8 },
+          "bike_score": { "type": "integer", "minimum": 0, "maximum": 8 },
+          "walk_min": {
+            "type": "array",
+            "minItems": 8,
+            "maxItems": 8,
+            "items": { "type": ["integer", "null"] },
+            "description": "Minute hoje do najbližje dobrine v vsaki od 8 kategorij. `null` = ni dosegljivo v 15 min."
+          },
+          "bike_min": {
+            "type": "array",
+            "minItems": 8,
+            "maxItems": 8,
+            "items": { "type": ["integer", "null"] }
+          },
+          "population": { "type": "number", "nullable": true, "description": "Prebivalstvo iz Kontur res-8, razdeljeno na res-10 otroke." }
+        }
+      },
+      "ObcinaRow": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "sifra": { "type": "integer" },
+          "naziv": { "type": "string", "description": "Uradno ime občine." },
+          "mestna_obcina": { "type": "boolean" },
+          "geom": { "type": "object", "description": "GeoJSON MultiPolygon (EPSG:4326)." }
+        }
+      },
+      "AmenityRow": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "osm_id": { "type": "integer" },
+          "category": {
+            "type": "string",
+            "enum": ["trgovina", "izobrazevanje", "zdravstvo", "park", "promet", "sport", "storitve", "delo"]
+          },
+          "name": { "type": "string", "nullable": true },
+          "geom": { "type": "object", "description": "GeoJSON Point (EPSG:4326)." },
+          "source_tags": { "type": "object", "description": "Surov OSM `tags` blok." }
+        }
+      },
+      "AmenitiesForPointArgs": {
+        "type": "object",
+        "required": ["p_lat", "p_lng"],
+        "properties": {
+          "p_lat": { "type": "number", "description": "Geografska širina izhodišča (WGS84)." },
+          "p_lng": { "type": "number", "description": "Geografska dolžina izhodišča (WGS84)." },
+          "p_mode": {
+            "type": "string",
+            "enum": ["pedestrian", "bicycle"],
+            "default": "pedestrian",
+            "description": "Način transporta. `pedestrian` (4 km/h) ali `bicycle` (13 km/h, Hybrid)."
+          }
+        }
+      },
+      "AmenityForPointRow": {
+        "type": "object",
+        "required": ["amenity_id", "category", "walk_min", "lat", "lng"],
+        "properties": {
+          "amenity_id": { "type": "integer" },
+          "category": { "type": "string" },
+          "name": { "type": "string", "nullable": true },
+          "walk_min": { "type": "integer", "description": "Najmanjši izokronski razred v minutah (5, 10 ali 15)." },
+          "lat": { "type": "number" },
+          "lng": { "type": "number" }
+        }
+      },
+      "LlmSearchCellsArgs": {
+        "type": "object",
+        "required": ["filter_spec"],
+        "properties": {
+          "filter_spec": {
+            "type": "object",
+            "properties": {
+              "required_category_indices": {
+                "type": "array",
+                "items": { "type": "integer", "minimum": 0, "maximum": 7 },
+                "description": "Indeksi kategorij, ki morajo biti dosegljive."
+              },
+              "h3_in": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Neobvezna omejitev na seznam H3 celic (npr. `h3.gridDisk(centerH3, 40)`)."
+              }
+            }
+          },
+          "p_limit": {
+            "type": "integer",
+            "default": 5,
+            "minimum": 1,
+            "maximum": 100,
+            "description": "Število vrnjenih celic."
+          }
+        }
+      },
+      "LlmSearchCellRow": {
+        "type": "object",
+        "required": ["h3", "score"],
+        "properties": {
+          "h3": { "type": "string" },
+          "score": { "type": "number", "description": "Kompozitna ocena (vrh = najboljše ujemanje)." },
+          "population": { "type": "number", "nullable": true }
+        }
+      }
+    }
+  }
+}

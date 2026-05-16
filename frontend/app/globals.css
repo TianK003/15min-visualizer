@@ -7,9 +7,9 @@
 :root {
   --bg: #f1ece2;
   --surface: #fffdf6;
-  --surface-glass: rgba(255, 253, 246, 0.74);
-  --surface-glass-strong: rgba(255, 253, 246, 0.92);
-  --surface-raised: rgba(255, 253, 246, 0.86);
+  --surface-glass: rgba(255, 253, 246, 0.25);
+  --surface-glass-strong: rgba(255, 253, 246, 0.35);
+  --surface-raised: rgba(255, 253, 246, 0.38);
 
   --text-primary: #1a1f2c;
   --text-secondary: #525866;
@@ -44,8 +44,8 @@
   --radius-lg: 16px;
   --radius-pill: 9999px;
 
-  --blur: blur(20px) saturate(140%);
-  --blur-strong: blur(28px) saturate(160%);
+  --blur: blur(24px) saturate(160%);
+  --blur-strong: blur(36px) saturate(180%);
 
   --font-mono: ui-monospace, "JetBrains Mono", SFMono-Regular, Consolas, monospace;
   --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", Roboto, system-ui, sans-serif;
@@ -54,13 +54,13 @@
 [data-theme="dark"] {
   --bg: #0a0d13;
   --surface: #141926;
-  --surface-glass: rgba(20, 25, 38, 0.62);
-  --surface-glass-strong: rgba(20, 25, 38, 0.86);
-  --surface-raised: rgba(28, 34, 48, 0.82);
+  --surface-glass: rgba(20, 25, 38, 0.32);
+  --surface-glass-strong: rgba(20, 25, 38, 0.40);
+  --surface-raised: rgba(28, 34, 48, 0.42);
 
   --text-primary: #ecedef;
-  --text-secondary: #9aa0aa;
-  --text-tertiary: #686d77;
+  --text-secondary: #ecedef;
+  --text-tertiary: #ecedef;
   --text-on-accent: #06141b;
 
   --border-glass: rgba(255, 255, 255, 0.07);
@@ -106,6 +106,9 @@ button { font-family: inherit; }
   inset: 0;
   width: 100%;
   height: 100%;
+}
+[data-theme="dark"] #map-root {
+  filter: brightness(0.65);
 }
 
 /* ────────────────────────────────────────────────────────────────────────
@@ -186,9 +189,9 @@ button { font-family: inherit; }
 }
 .legend-row:first-child { margin-top: 6px; }
 .legend-swatch {
-  width: 12px;
-  height: 12px;
-  border-radius: 3px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
   flex-shrink: 0;
 }
 .legend-loading {
@@ -217,10 +220,14 @@ button { font-family: inherit; }
 }
 .address-search input {
   width: 100%;
-  padding: 11px 18px;
+  padding: 11px 40px 11px 18px;
   border-radius: var(--radius-pill);
   border: 1px solid var(--border-glass);
-  background: var(--surface-glass-strong);
+  background-color: var(--surface-glass-strong);
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238b919c' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='11' cy='11' r='7'/><line x1='21' y1='21' x2='16.65' y2='16.65'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 14px center;
+  background-size: 14px 14px;
   backdrop-filter: var(--blur);
   -webkit-backdrop-filter: var(--blur);
   font: inherit;
@@ -228,6 +235,9 @@ button { font-family: inherit; }
   color: var(--text-primary);
   box-shadow: var(--shadow-md);
   transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+[data-theme="dark"] .address-search input {
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23686d77' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='11' cy='11' r='7'/><line x1='21' y1='21' x2='16.65' y2='16.65'/></svg>");
 }
 .address-search input::placeholder { color: var(--text-tertiary); }
 .address-search input:focus {
@@ -270,12 +280,15 @@ button { font-family: inherit; }
 .address-status.error { color: var(--danger); }
 
 /* ────────────────────────────────────────────────────────────────────────
-   View-switch (top row) and Hoja/Kolo (bottom-right) — both solid pills,
-   no glass, matching chrome.
+   View-switch (top row) and Hoja/Kolo (bottom-right) — glass-morphism pills
+   matching the rest of the chrome (scorecard, legend, address-search).
+   Theme-aware via --surface-glass-strong / --border-glass.
    ──────────────────────────────────────────────────────────────────────── */
 .view-switch {
   display: inline-flex;
-  background: var(--surface);
+  background: var(--surface-glass-strong);
+  backdrop-filter: var(--blur);
+  -webkit-backdrop-filter: var(--blur);
   border: 1px solid var(--border-glass);
   border-radius: var(--radius-pill);
   padding: 4px;
@@ -306,13 +319,15 @@ button { font-family: inherit; }
 }
 
 /* Hoja/Kolo lives in the bottom-right where the view-switch used to sit.
-   Same chrome as .view-switch so they read as one visual family. */
+   Same glass chrome as .view-switch so they read as one visual family. */
 .mode-toggle-global {
   position: absolute;
   right: 16px;
   bottom: 16px;
   display: inline-flex;
-  background: var(--surface);
+  background: var(--surface-glass-strong);
+  backdrop-filter: var(--blur);
+  -webkit-backdrop-filter: var(--blur);
   border: 1px solid var(--border-glass);
   border-radius: var(--radius-pill);
   padding: 4px;
@@ -340,6 +355,16 @@ button { font-family: inherit; }
 .mode-toggle-global button:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
+}
+
+/* Dark-mode active-pill softening — the light-mode "dark slab on cream
+   glass" inverts to a near-white slab on dark glass that fights the glass
+   family. Use a soft white-glass fill with primary text instead. */
+[data-theme="dark"] .view-switch button.active,
+[data-theme="dark"] .mode-toggle-global button.active,
+[data-theme="dark"] .investor-cat-pill.active {
+  background: rgba(255, 255, 255, 0.10);
+  color: var(--text-primary);
 }
 
 /* Legacy in-scorecard mode toggle — kept as the smaller, in-card variant
@@ -410,19 +435,20 @@ button { font-family: inherit; }
 .provenance-text-link {
   appearance: none;
   border: 1px solid var(--border-glass);
-  background: var(--surface);
+  background: var(--surface-glass-strong);
+  backdrop-filter: var(--blur);
+  -webkit-backdrop-filter: var(--blur);
   color: var(--text-secondary);
   font: inherit;
   font-size: 12px;
   padding: 6px 12px;
   border-radius: var(--radius-pill);
   cursor: pointer;
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow-md);
   transition: color 140ms ease, background 140ms ease;
 }
 .provenance-text-link:hover {
   color: var(--text-primary);
-  background: var(--surface);
 }
 .provenance-text-link:focus-visible {
   outline: 2px solid var(--accent);
@@ -633,8 +659,15 @@ button { font-family: inherit; }
 .scorecard-row:disabled { color: var(--text-tertiary); cursor: default; }
 .scorecard-row.miss:hover { background: transparent; }
 .scorecard-row .ico { font-size: 16px; }
-.scorecard-row .cat { font-weight: 500; }
+.scorecard-row .cat { font-weight: 500; display: flex; align-items: center; gap: 5px; min-width: 0; }
 .scorecard-row.active .cat { font-weight: 600; color: var(--accent-strong); }
+.cat-color {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: inline-block;
+}
 [data-theme="dark"] .scorecard-row.active .cat { color: var(--accent); }
 .scorecard-row .check {
   font-weight: 700;
@@ -690,9 +723,9 @@ button { font-family: inherit; }
 }
 
 /* ────────────────────────────────────────────────────────────────────────
-   Investor category filter — vertical pill column at top-left.
-   Sits in the same slot as the scoreboard; the JSX only renders this when
-   no cell is selected, so the two never overlap.
+   Investor category filter — vertical pill column at top-left, glass panel
+   matching the scoreboard / legend treatment. Sits in the same slot as the
+   scoreboard; the JSX only renders this when no cell is selected.
    ──────────────────────────────────────────────────────────────────────── */
 .investor-cat-filter {
   position: absolute;
@@ -704,7 +737,9 @@ button { font-family: inherit; }
   flex-direction: column;
   gap: 4px;
   padding: 6px;
-  background: var(--surface);
+  background: var(--surface-glass-strong);
+  backdrop-filter: var(--blur-strong);
+  -webkit-backdrop-filter: var(--blur-strong);
   border: 1px solid var(--border-glass);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-md);
@@ -951,20 +986,23 @@ button { font-family: inherit; }
   justify-content: center;
   width: 48px;
   height: 48px;
-  background: var(--accent);
-  color: var(--text-on-accent);
-  border: 1px solid var(--accent-strong);
+  background: var(--surface-glass-strong);
+  backdrop-filter: var(--blur);
+  -webkit-backdrop-filter: var(--blur);
+  color: var(--accent);
+  border: 1px solid var(--border-glass);
   border-radius: 50%;
   padding: 0;
   cursor: pointer;
-  box-shadow: var(--shadow-lg);
+  box-shadow: var(--shadow-md);
   z-index: 30;
-  transition: background 140ms ease, transform 140ms ease, box-shadow 140ms ease;
+  transition: border-color 140ms ease, transform 140ms ease, box-shadow 140ms ease, color 140ms ease;
 }
 .chat-toggle:hover {
-  background: var(--accent-strong);
-  transform: translateY(-1px) scale(1.05);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  color: var(--accent-strong);
+  border-color: var(--border-strong);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-lg);
 }
 .chat-toggle:focus-visible {
   outline: 2px solid var(--accent);

@@ -1,10 +1,11 @@
 "use client";
 
 // Tabbed Swagger UI:
-//   • "App API"  — hand-authored OpenAPI 3.1 spec for the Next.js routes
-//                  shipped at /openapi.json.
-//   • "Supabase" — auto-generated PostgREST spec for the read-only data
-//                  tables + RPCs. Anon key auto-injected.
+//   • "Združena dokumentacija" — ročno vzdrževani OpenAPI 3.1 spec na
+//                                /openapi.json, pokrije Next.js poti in
+//                                Supabase tabele + RPC.
+//   • "Supabase (živo)"         — samodejno generiran PostgREST spec, neposredno
+//                                iz delujočega Supabase. Anonimni ključ vbrizgan.
 
 import { useState } from "react";
 import Link from "next/link";
@@ -26,10 +27,11 @@ export default function ApiDocsPage() {
       <header className="api-docs-header">
         <h1>REST API — 15min Slovenija</h1>
         <p>
-          Dva sklopa: <b>App API</b> pokriva ročno spisane Next.js poti (
-          <code>/api/llm</code>, <code>/api/valhalla</code>), <b>Supabase</b> pokriva tabele in RPC
-          funkcije, ki jih iz shema migracij samodejno izpostavi PostgREST. Vse je javno z
-          anonimnim ključem (samo branje za Supabase tabele).
+          <b>Združena dokumentacija</b> pokrije celoten spekter: ročno spisane Next.js poti (
+          <code>/api/llm</code>, <code>/api/valhalla</code>) in glavne Supabase tabele +
+          RPC funkcije, ki jih frontend uporablja. <b>Supabase (živo)</b> kaže neposredno
+          PostgREST samo-opis trenutnega Supabase strežnika — uporabno za potrditev shem in
+          klice iz Swagger UI-ja v živo. Vse je javno z anonimnim ključem (samo branje).
         </p>
         <div className="api-docs-tabs" role="tablist" aria-label="API surface">
           <button
@@ -39,7 +41,7 @@ export default function ApiDocsPage() {
             className={tab === "app" ? "active" : ""}
             onClick={() => setTab("app")}
           >
-            App API
+            Združena dokumentacija
           </button>
           <button
             type="button"
@@ -48,7 +50,7 @@ export default function ApiDocsPage() {
             className={tab === "supabase" ? "active" : ""}
             onClick={() => setTab("supabase")}
           >
-            Supabase REST
+            Supabase (živo)
           </button>
         </div>
         <p style={{ marginTop: 12, fontSize: 12 }}>

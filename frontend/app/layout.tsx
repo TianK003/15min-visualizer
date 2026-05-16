@@ -6,21 +6,12 @@ export const metadata: Metadata = {
   description: "15-minutni mestni indeks za vso Slovenijo — pešačite do osnovnih dnevnih opravil v 15 minutah.",
 };
 
-// Pre-paint script that picks the theme before React hydrates. Avoids the
-// "light-mode flash" on dark-mode users' page loads. Reads localStorage first
-// (explicit user choice), then prefers-color-scheme (system default).
+// Pre-paint script that pins the theme to "light" on every page load. Dark
+// mode currently has a basemap-label rendering quirk on Positron tiles, so
+// reloading always boots into light. The in-session ThemeToggle still flips
+// the attribute; we just don't persist or restore the choice across reloads.
 const THEME_INIT_SCRIPT = `(() => {
-  try {
-    const stored = window.localStorage.getItem('theme');
-    if (stored === 'light' || stored === 'dark') {
-      document.documentElement.setAttribute('data-theme', stored);
-      return;
-    }
-    const dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-    document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
-  } catch {
-    document.documentElement.setAttribute('data-theme', 'light');
-  }
+  try { document.documentElement.setAttribute('data-theme', 'light'); } catch {}
 })();`;
 
 export default function RootLayout({
