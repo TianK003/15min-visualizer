@@ -4,10 +4,10 @@
     "title": "15min Slovenija — REST API",
     "version": "1.0.0",
     "summary": "Vse javne končne točke aplikacije 15min Slovenija — ročno spisane Next.js poti (LLM, Valhalla) in ključne Supabase PostgREST poti (tabele + RPC).",
-    "description": "## Vsebina\n\nTa dokument pokriva **dva sklopa** končnih točk:\n\n1. **Next.js poti** (`/api/llm`, `/api/valhalla/{endpoint}`) — ročno spisane v `frontend/app/api/`. Te poti zavijejo storitve tretjih oseb (OpenRouter LLM, Valhalla routing) in tečejo v Node.js runtime znotraj Next.js aplikacije.\n2. **Supabase PostgREST poti** (`/rest/v1/...`) — samodejno generirane iz SQL migracij v `backend/supabase/migrations/`. Pokrivajo tabele `cell_scores`, `obcine`, `amenities` ter RPC funkcije `amenities_for_point` in `llm_search_cells`. Vse poti so namenjene **samo branju** in zahtevajo `apikey` glavo z anonimnim Supabase ključem.\n\n## Avtentikacija\n\n- **Next.js poti**: same-origin (klici iz brskalnika na istem hostu); brez dodatne avtentikacije.\n- **Supabase PostgREST poti**: zahtevajo glavi `apikey: <ANON_KEY>` in `Authorization: Bearer <ANON_KEY>`. Anonimni ključ je javen; RLS na strani Supabase omogoča samo branje.\n\n## Bazni naslovi\n\n- Next.js: relativno (`/api/...`) — vedno isti host kot frontend.\n- Supabase: `NEXT_PUBLIC_SUPABASE_URL` (lokalno `/sb` → `http://127.0.0.1:54321`, v produkciji javni Supabase URL).",
+    "description": "## Vsebina\n\nTa dokument pokriva **dva sklopa** končnih točk:\n\n1. **Next.js poti** (`/api/llm`, `/api/llm-search`, `/api/valhalla/{endpoint}`) — ročno spisane v `frontend/app/api/`. Te poti zavijejo storitve tretjih oseb (OpenRouter LLM, Valhalla routing) in tečejo v Node.js runtime znotraj Next.js aplikacije.\n2. **Supabase PostgREST poti** (`/rest/v1/...`) — samodejno generirane iz SQL migracij v `backend/supabase/migrations/`. Pokrivajo tabele `cell_scores`, `obcine`, `amenities` ter RPC funkcije `amenities_for_point`, `llm_search_cells` in `search_cells_v2`. Vse poti so namenjene **samo branju** in zahtevajo `apikey` glavo z anonimnim Supabase ključem.\n\n## Avtentikacija\n\n- **Next.js poti**: same-origin (klici iz brskalnika na istem hostu); brez dodatne avtentikacije.\n- **Supabase PostgREST poti**: zahtevajo glavi `apikey: <ANON_KEY>` in `Authorization: Bearer <ANON_KEY>`. Anonimni ključ je javen; RLS na strani Supabase omogoča samo branje.\n\n## Bazni naslovi\n\n- Next.js: relativno (`/api/...`) — vedno isti host kot frontend.\n- Supabase: `NEXT_PUBLIC_SUPABASE_URL` (lokalno `/sb` → `http://127.0.0.1:54321`, v produkciji javni Supabase URL).",
     "contact": {
       "name": "15min Slovenija",
-      "url": "https://github.com/TianK003/15minut"
+      "url": "https://github.com/TianK003/15min-visualizer"
     },
     "license": {
       "name": "Apache 2.0",
@@ -143,11 +143,88 @@
         }
       }
     },
+    "/api/llm-search": {
+      "post": {
+        "tags": ["LLM"],
+        "summary": "v2 strukturirano iskanje celic z LLM-om",
+        "description": "Druga generacija iskanja po opisu življenjske situacije. Razlike glede na `/api/llm` z `kind: \"search\"`:\n\n- **Strukturiran izhod** preko Vercel AI SDK `generateObject()` z Zod shemo (`SearchSpec`) — ni več ročnega `JSON.parse` na odgovoru. Model je MINIMAX preko OpenRouter (privzeto `minimax/minimax-m2.7`).\n- **Rangiranje preko `ranking_weights`** — frontend ne pošlje uteži (LLM jih predlaga), RPC pa jih uporabi za kompozitno oceno (kategorije + populacija + bližina ciljnega mesta).\n- **Geokodiran cilj** se pošlje kot `target_lat`/`target_lng` v RPC, ne kot vnaprej razširjena `gridDisk` (kar omogoča rangiranje po bližini).\n- Kliče RPC `search_cells_v2` namesto `llm_search_cells`.\n- Vrača polje `results` (ne `top_cells`).\n\nFotonsko geokodiranje ciljnega mesta je omejeno na slovenski bbox `13.3,45.4,16.7,46.9` s 4 s timeoutom; ob neuspehu se išče po vsej Sloveniji in v `filter_summary` doda obvestilo.",
+        "operationId": "postLlmSearch",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/LlmSearchV2Request" },
+              "examples": {
+                "family-search": {
+                  "summary": "Mlada družina, iskanje med Ljubljano in Mariborom",
+                  "value": {
+                    "query": "Sva mlada družina, oba delava v Ljubljani — kje bi bilo dobro živeti, blizu vrtca?",
+                    "history": []
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Rangirane celice z razlago.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/LlmSearchV2Response" }
+              }
+            }
+          },
+          "400": {
+            "description": "Telo zahteve ni veljaven JSON.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorBody" }
+              }
+            }
+          },
+          "422": {
+            "description": "Validacija sheme ni uspela (Zod).",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ZodErrorBody" }
+              }
+            }
+          },
+          "500": {
+            "description": "Supabase RPC neuspeh ali manjkajoč `SUPABASE_INTERNAL_URL`.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorBody" }
+              }
+            }
+          },
+          "501": {
+            "description": "`OPENROUTER_API_KEY` ni nastavljen.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorBody" },
+                "example": { "error": "LLM not configured" }
+              }
+            }
+          },
+          "502": {
+            "description": "LLM `generateObject` ni vrnil veljavnega objekta (timeout, kvota, neujemanje s shemo).",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorBody" },
+                "example": { "error": "Nisem te razumel, poskusi malo bolj jasno" }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/valhalla/{endpoint}": {
       "post": {
         "tags": ["Valhalla"],
         "summary": "Proxy zahteva na Valhalla routing engine",
-        "description": "Telo zahteve neposredno posreduje na Valhalla container (lokalno `http://127.0.0.1:8002`, na Railway javni URL). Obstaja, ker Valhalla vrne 405 na CORS OPTIONS preflight, kar prepreči direktne klice iz brskalnika.\n\nBeli seznam dovoljenih končnih točk: `isochrone`, `route`, `locate`, `matrix`, `trace_route`. Status koda in `Content-Type` iz Valhalla se ohranita.\n\nFiksne hitrosti odjemalca (preko env): `walking_speed=4 km/h`, `cycling_speed=13 km/h`, profil za kolo uporablja `bicycle_type=Hybrid`.",
+        "description": "Telo zahteve neposredno posreduje na Valhalla container (lokalno `http://127.0.0.1:8002`, na Railway javni URL). Obstaja, ker Valhalla vrne 405 na CORS OPTIONS preflight, kar prepreči direktne klice iz brskalnika.\n\nBeli seznam dovoljenih končnih točk: `isochrone`, `route`, `locate`, `matrix`, `sources_to_targets`, `trace_route`. Status koda in `Content-Type` iz Valhalla se ohranita.\n\nFiksne hitrosti odjemalca (preko env): `walking_speed=4 km/h`, `cycling_speed=13 km/h`, profil za kolo uporablja `bicycle_type=Hybrid`.",
         "operationId": "postValhalla",
         "parameters": [
           {
@@ -156,7 +233,7 @@
             "required": true,
             "schema": {
               "type": "string",
-              "enum": ["isochrone", "route", "locate", "matrix", "trace_route"]
+              "enum": ["isochrone", "route", "locate", "matrix", "sources_to_targets", "trace_route"]
             },
             "description": "Ena izmed podprtih Valhalla končnih točk. Karkoli drugega vrne 400."
           }
@@ -457,8 +534,8 @@
     "/rest/v1/rpc/llm_search_cells": {
       "post": {
         "tags": ["Supabase — RPC"],
-        "summary": "Iskanje H3 celic, ki ustrezajo filtru LLM",
-        "description": "PL/pgSQL funkcija, ki sprejme strukturiran `filter_spec` (rezultat parsiranja LLM-a) in vrne najboljše H3 celice po kompozitni oceni. Frontend kliče to funkcijo iz `/api/llm` ko uporabnik vnese opis življenjske situacije.\n\n**`filter_spec` polja**:\n- `required_category_indices` — seznam indeksov kategorij (0-7), ki morajo biti dosegljive\n- `h3_in` — neobvezna omejitev na regijo (npr. `h3.gridDisk` okoli mesta)\n\nRangiranje: celice, ki ustrezajo *vsem* zahtevanim kategorijam, dobijo najvišjo oceno; nato sledi populacija in skupna 15-min ocena.",
+        "summary": "Iskanje H3 celic, ki ustrezajo filtru LLM (v1)",
+        "description": "PL/pgSQL funkcija, ki sprejme strukturiran `filter_spec` (rezultat parsiranja LLM-a) in vrne najboljše H3 celice po kompozitni oceni. Frontend kliče to funkcijo iz `/api/llm` ko uporabnik vnese opis življenjske situacije.\n\n**`filter_spec` polja**:\n- `required_category_indices` — seznam indeksov kategorij (0-7), ki morajo biti dosegljive\n- `h3_in` — neobvezna omejitev na regijo (npr. `h3.gridDisk` okoli mesta)\n\nRangiranje: celice, ki ustrezajo *vsem* zahtevanim kategorijam, dobijo najvišjo oceno; nato sledi populacija in skupna 15-min ocena.\n\n**Opomba:** Novejši `/api/llm-search` uporablja `search_cells_v2`, ki dodatno upošteva uteži in bližino ciljne lokacije.",
         "operationId": "rpcLlmSearchCells",
         "parameters": [
           { "name": "apikey", "in": "header", "required": true, "schema": { "type": "string" } },
@@ -499,6 +576,55 @@
                 "schema": {
                   "type": "array",
                   "items": { "$ref": "#/components/schemas/LlmSearchCellRow" }
+                }
+              }
+            }
+          },
+          "401": { "description": "Manjkajoč ali neveljaven anonimni ključ." }
+        }
+      }
+    },
+    "/rest/v1/rpc/search_cells_v2": {
+      "post": {
+        "tags": ["Supabase — RPC"],
+        "summary": "Iskanje H3 celic z utežmi in bližino cilja (v2)",
+        "description": "Druga generacija LLM iskanja. PL/pgSQL funkcija (`backend/supabase/migrations/0004_llm_search_v2.sql`), kliče jo `/api/llm-search`.\n\nRazlike glede na `llm_search_cells`:\n- Sprejme `ranking_weights` (po kategorijah / na populacijo / na bližino).\n- Sprejme `target_lat`/`target_lng` za rangiranje po razdalji od ciljnega mesta.\n- Vrne razširjeno vrstico s podatki o občini, demografskimi razdelitvami (`el65`, `kids`), številom dosegljivih kategorij in kompozitno oceno.",
+        "operationId": "rpcSearchCellsV2",
+        "parameters": [
+          { "name": "apikey", "in": "header", "required": true, "schema": { "type": "string" } },
+          { "name": "Authorization", "in": "header", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/SearchCellsV2Args" },
+              "examples": {
+                "with-target": {
+                  "summary": "Iskanje z geokodiranim ciljnim mestom",
+                  "value": {
+                    "filter_spec": {
+                      "required_category_indices": [0, 1, 4],
+                      "h3_in": ["8a1e1216b367fff"]
+                    },
+                    "ranking_weights": { "categories": 0.6, "population": 0.2, "proximity": 0.2 },
+                    "target_lat": 46.0512,
+                    "target_lng": 14.5061,
+                    "p_limit": 5
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Rangirane celice s kompozitno oceno.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": { "$ref": "#/components/schemas/SearchCellsV2Row" }
                 }
               }
             }
@@ -740,6 +866,90 @@
           "h3": { "type": "string" },
           "score": { "type": "number", "description": "Kompozitna ocena (vrh = najboljše ujemanje)." },
           "population": { "type": "number", "nullable": true }
+        }
+      },
+      "LlmSearchV2Request": {
+        "type": "object",
+        "required": ["query"],
+        "properties": {
+          "query": { "type": "string", "minLength": 1, "maxLength": 500, "description": "Prosto-tekstovni slovenski opis situacije." },
+          "history": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/ChatMessage" },
+            "default": [],
+            "description": "Prejšnji obrati pogovora. Privzeto prazno polje."
+          }
+        }
+      },
+      "LlmSearchV2Response": {
+        "type": "object",
+        "required": ["kind", "reply_text_sl", "filter_summary", "reasoning", "results"],
+        "properties": {
+          "kind": { "type": "string", "const": "search" },
+          "reply_text_sl": { "type": "string", "description": "2–4-stavčen slovenski povzetek razumevanja zahteve." },
+          "filter_summary": { "type": "string", "description": "Eno-vrstični povzetek razčlenjenega filtra." },
+          "reasoning": { "type": "string", "description": "Razlaga LLM-a po korakih (angleško)." },
+          "results": {
+            "type": "array",
+            "description": "Rangirane H3 celice — neposredno iz RPC `search_cells_v2`.",
+            "items": { "$ref": "#/components/schemas/SearchCellsV2Row" }
+          }
+        }
+      },
+      "RankingWeights": {
+        "type": "object",
+        "description": "Uteži za kompozitno oceno. Vsota ni vsiljena, RPC normalizira.",
+        "properties": {
+          "categories": { "type": "number", "description": "Utež za število zadetih zahtevanih kategorij." },
+          "population": { "type": "number", "description": "Utež za demografsko gostoto." },
+          "proximity": { "type": "number", "description": "Utež za bližino ciljnega mesta (zahteva `target_lat`/`target_lng`)." }
+        }
+      },
+      "SearchCellsV2Args": {
+        "type": "object",
+        "required": ["filter_spec", "ranking_weights"],
+        "properties": {
+          "filter_spec": {
+            "type": "object",
+            "properties": {
+              "required_category_indices": {
+                "type": "array",
+                "items": { "type": "integer", "minimum": 0, "maximum": 7 }
+              },
+              "h3_in": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Neobvezna omejitev na seznam H3 celic."
+              }
+            }
+          },
+          "ranking_weights": { "$ref": "#/components/schemas/RankingWeights" },
+          "target_lat": { "type": "number", "nullable": true },
+          "target_lng": { "type": "number", "nullable": true },
+          "p_limit": { "type": "integer", "default": 5, "minimum": 1, "maximum": 100 }
+        }
+      },
+      "SearchCellsV2Row": {
+        "type": "object",
+        "required": ["h3", "walk_score", "bike_score", "composite"],
+        "properties": {
+          "h3": { "type": "string" },
+          "sifra": { "type": "integer", "nullable": true, "description": "Šifra občine." },
+          "obcina_name": { "type": "string", "nullable": true },
+          "walk_score": { "type": "integer", "minimum": 0, "maximum": 8 },
+          "bike_score": { "type": "integer", "minimum": 0, "maximum": 8 },
+          "walk_min": {
+            "type": "array",
+            "minItems": 8,
+            "maxItems": 8,
+            "items": { "type": ["integer", "null"] }
+          },
+          "population": { "type": "number", "nullable": true },
+          "el65": { "type": "number", "nullable": true, "description": "Delež prebivalstva 65+." },
+          "kids": { "type": "number", "nullable": true, "description": "Delež prebivalstva 0–14." },
+          "cats_hit": { "type": "integer", "description": "Število zahtevanih kategorij, ki so dosegljive." },
+          "cats_required": { "type": "integer", "description": "Število zahtevanih kategorij iz `filter_spec`." },
+          "composite": { "type": "number", "description": "Kompozitna ocena za rangiranje (vrh = najboljše ujemanje)." }
         }
       }
     }

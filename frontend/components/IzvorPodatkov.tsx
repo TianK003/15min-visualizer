@@ -34,15 +34,22 @@ const CARDS: Card[] = [
     title: "ARSO Zavarovana območja",
     count: "531 poligonov",
     license: "CC-BY 4.0",
-    source: "https://gis.arso.gov.si/arcgis/services/zavarovana_obmocja/MapServer/WFSServer",
+    source: "https://gis.arso.gov.si/related/ARSO_WFS/",
     why: "Naravoarstveni status pove, kje gradnja ni smiselna — uporablja se v investitorskem pogledu.",
   },
   {
-    title: "ARSO Natura 2000",
-    count: "355 poligonov",
-    license: "CC-BY 4.0",
-    source: "https://gis.arso.gov.si/arcgis/services/natura2000/MapServer/WFSServer",
-    why: "Evropsko zaščitena območja niso ali ne smejo biti pozidana; pomembna pri oceni potenciala razvoja.",
+    title: "Degradirana območja",
+    count: "Centralni register prostorskih podatkov",
+    license: "Javno dostopno",
+    source: "https://crp.gis.si/",
+    why: "Degradirana zemljišča izvzamemo iz priporočil za gradnjo novih storitev — investitorska analiza tako prikaže le realno razpoložljive parcele.",
+  },
+  {
+    title: "Predlogi za nove storitve (eProstor)",
+    count: "Negradijene parcele + stavbe",
+    license: "Javno dostopno",
+    source: "https://eprostor.gov.si/imps/srv/slv/catalog.search#/metadata/9a8fd241-9162-407c-94e7-c98e05766881",
+    why: "Podlaga za priporočila novih lokacij dobrin v investitorskem pogledu — kombiniramo z degradiranimi območji, da označimo le primerne (negradijene) lokacije.",
   },
   {
     title: "Kontur Population SI",
@@ -71,7 +78,17 @@ export default function IzvorPodatkov({ onClose }: Props) {
         <p className="lead">
           Zemljevid pokriva vso Slovenijo. Vsako celico (~66 m) ocenimo 0–8 — koliko od osmih dnevnih
           kategorij je dosegljivih v 15 minutah hoje. Podatki prihajajo iz javnih, prosto-licenčnih
-          virov; vse korake izračuna lahko ponovite sami (povezava do kode v dnu).
+          virov; vse korake izračuna lahko ponovite sami.
+        </p>
+        <p className="lead">
+          Vsa koda je dostopna na sledečem naslovu:{" "}
+          <a
+            href="https://github.com/TianK003/15min-visualizer"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            github.com/TianK003/15min-visualizer ↗
+          </a>
         </p>
       </header>
 
@@ -115,10 +132,12 @@ export default function IzvorPodatkov({ onClose }: Props) {
             <a href="/openapi.json" target="_blank" rel="noopener noreferrer">
               <b>OpenAPI 3.1 spec ↗</b>
             </a>{" "}
-            · ročno vzdrževana specifikacija — pokriva <code>/api/llm</code>,
-            <code>/api/valhalla/{"{endpoint}"}</code> ter Supabase poti za
-            <code>cell_scores</code>, <code>obcine</code>, <code>amenities</code> in RPC
-            <code>amenities_for_point</code> in <code>llm_search_cells</code>
+            · ročno vzdrževana specifikacija — pokriva Next.js poti{" "}
+            <code>/api/llm</code>, <code>/api/llm-search</code>,{" "}
+            <code>/api/valhalla/{"{endpoint}"}</code> ter Supabase poti za{" "}
+            <code>cell_scores</code>, <code>obcine</code>, <code>amenities</code> in RPC{" "}
+            <code>amenities_for_point</code>, <code>llm_search_cells</code> in{" "}
+            <code>search_cells_v2</code>.
           </li>
           <li>
             <a href={`${SUPABASE_URL}/rest/v1/`} target="_blank" rel="noopener noreferrer">
@@ -129,7 +148,7 @@ export default function IzvorPodatkov({ onClose }: Props) {
           <li>
             GitHub commit{" "}
             {SHA ? (
-              <a href={`https://github.com/TianK003/15minut/commit/${SHA}`}>
+              <a href={`https://github.com/TianK003/15min-visualizer/commit/${SHA}`}>
                 <code>{SHA.slice(0, 7)}</code>
               </a>
             ) : (
