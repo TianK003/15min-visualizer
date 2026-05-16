@@ -213,7 +213,9 @@ def export(cells: gpd.GeoDataFrame) -> None:
 
 
 def aggregate_obcine(cells: gpd.GeoDataFrame) -> None:
-    """Population-weighted walk + bike mean per občina."""
+    """Population-weighted walk + bike mean per občina, plus per-category
+    population share *without* 15-min access for each mode. Used by the
+    frontend's občina click card."""
     if not OBCINE_INPUT.exists():
         print(f"\n  Skipping občina aggregation: {OBCINE_INPUT.name} not found.")
         return
@@ -222,33 +224,66 @@ def aggregate_obcine(cells: gpd.GeoDataFrame) -> None:
     obcine = gpd.read_file(OBCINE_INPUT)
     print(f"  {len(obcine):,} polygons loaded")
 
-    work = cells[["walk_score", "bike_score", "population", "geometry"]].copy()
+    walk_cols = [f"walk_{c}" for c in CATEGORIES]
+    bike_cols = [f"bike_{c}" for c in CATEGORIES]
+    work = cells[["walk_score", "bike_score", "population", "geometry", *walk_cols, *bike_cols]].copy()
     work["walk_pop"] = work["walk_score"].astype(float) * work["population"]
     work["bike_pop"] = work["bike_score"].astype(float) * work["population"]
+    # Population in cells where the category is NOT reachable in 15 min, per
+    # mode × category. Sum across an občina ÷ population_sum = share missing.
+    for c in CATEGORIES:
+        work[f"walk_mp_{c}"] = (work[f"walk_{c}"] > 15).astype(float) * work["population"]
+        work[f"bike_mp_{c}"] = (work[f"bike_{c}"] > 15).astype(float) * work["population"]
     joined = gpd.sjoin(work, obcine[["geometry"]], predicate="within", how="inner")
 
-    agg = joined.groupby("index_right").agg(
-        walk_sum=("walk_pop", "sum"),
-        bike_sum=("bike_pop", "sum"),
-        population_sum=("population", "sum"),
-        n_cells=("walk_score", "size"),
-    )
+    agg_kwargs: dict = {
+        "walk_sum": ("walk_pop", "sum"),
+        "bike_sum": ("bike_pop", "sum"),
+        "population_sum": ("population", "sum"),
+        "n_cells": ("walk_score", "size"),
+    }
+    for c in CATEGORIES:
+        agg_kwargs[f"walk_miss_{c}"] = (f"walk_mp_{c}", "sum")
+        agg_kwargs[f"bike_miss_{c}"] = (f"bike_mp_{c}", "sum")
+    agg = joined.groupby("index_right").agg(**agg_kwargs)
     agg["walk_mean"] = (agg["walk_sum"] / agg["population_sum"]).fillna(0)
     agg["bike_mean"] = (agg["bike_sum"] / agg["population_sum"]).fillna(0)
+    for c in CATEGORIES:
+        agg[f"walk_miss_pct_{c}"] = (agg[f"walk_miss_{c}"] / agg["population_sum"]).fillna(0)
+        agg[f"bike_miss_pct_{c}"] = (agg[f"bike_miss_{c}"] / agg["population_sum"]).fillna(0)
 
     obcine_out = obcine.copy()
     obcine_out["walk_mean"] = agg["walk_mean"].reindex(obcine_out.index).fillna(0).round(3)
     obcine_out["bike_mean"] = agg["bike_mean"].reindex(obcine_out.index).fillna(0).round(3)
     obcine_out["population"] = agg["population_sum"].reindex(obcine_out.index).fillna(0).round(0).astype(int)
     obcine_out["n_cells"] = agg["n_cells"].reindex(obcine_out.index).fillna(0).astype(int)
+    # Per-category flat columns first (GeoPandas' GeoJSON driver doesn't take
+    # nested dicts); we nest them post-hoc when rewriting the file below.
+    for c in CATEGORIES:
+        obcine_out[f"walk_miss_pct_{c}"] = agg[f"walk_miss_pct_{c}"].reindex(obcine_out.index).fillna(0).round(3)
+        obcine_out[f"bike_miss_pct_{c}"] = agg[f"bike_miss_pct_{c}"].reindex(obcine_out.index).fillna(0).round(3)
 
     if OBCINE_SCORED.exists():
         OBCINE_SCORED.unlink()
     obcine_out.to_file(OBCINE_SCORED, driver="GeoJSON")
+    # Post-process: nest the per-category flat columns into walk_missing /
+    # bike_missing dicts so the frontend doesn't need to know category names.
+    with OBCINE_SCORED.open() as f:
+        fc = json.load(f)
+    for feat in fc["features"]:
+        props = feat["properties"]
+        walk_missing = {}
+        bike_missing = {}
+        for c in CATEGORIES:
+            wk = f"walk_miss_pct_{c}"
+            bk = f"bike_miss_pct_{c}"
+            if wk in props: walk_missing[c] = props.pop(wk)
+            if bk in props: bike_missing[c] = props.pop(bk)
+        props["walk_missing"] = walk_missing
+        props["bike_missing"] = bike_missing
+    OBCINE_SCORED.write_text(json.dumps(fc))
     FRONTEND_OBCINE.parent.mkdir(parents=True, exist_ok=True)
-    if FRONTEND_OBCINE.exists():
-        FRONTEND_OBCINE.unlink()
-    obcine_out.to_file(FRONTEND_OBCINE, driver="GeoJSON")
+    FRONTEND_OBCINE.write_text(OBCINE_SCORED.read_text())
 
     print(f"  ✓ {OBCINE_SCORED.relative_to(ROOT)}  ({OBCINE_SCORED.stat().st_size/1024/1024:,.1f} MB)")
     print(f"  ✓ {FRONTEND_OBCINE.relative_to(ROOT)}")
