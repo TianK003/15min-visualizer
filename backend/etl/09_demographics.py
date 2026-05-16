@@ -36,9 +36,10 @@ import time
 from pathlib import Path
 
 import geopandas as gpd
-import h3
-from shapely.geometry import Polygon, MultiPolygon, Point
+from shapely.geometry import Point
 from shapely.strtree import STRtree
+
+from _demographics_helpers import build_h3_to_sifra, load_obcine
 
 ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = ROOT / "data" / "15min-slo"
@@ -115,43 +116,6 @@ def write_demographics(demographics: dict[int, dict], obcine: gpd.GeoDataFrame) 
     log(f"  ✓ {FRONTEND_DEMOGRAPHICS.relative_to(ROOT)}")
 
 
-def build_h3_to_sifra(obcine: gpd.GeoDataFrame) -> dict[str, int]:
-    """For each občina, enumerate its H3 res-10 cells via h3.polygon_to_cells,
-    union into a single h3 → sifra map. Boundary cells get assigned to
-    whichever občina h3 places them in (h3.polygon_to_cells uses centroid
-    containment per H3 spec)."""
-    log("Building h3 → sifra map (h3.polygon_to_cells)…")
-    out: dict[str, int] = {}
-    t0 = time.time()
-
-    def _ring_to_coords(ring):
-        # h3 v4 expects (lat, lng) pairs; shapely gives (lng, lat).
-        return [(y, x) for (x, y) in ring]
-
-    for _, row in obcine.iterrows():
-        sifra = int(row["OB_ID"])
-        geom = row.geometry
-        polys: list[Polygon] = []
-        if isinstance(geom, MultiPolygon):
-            polys.extend(geom.geoms)
-        elif isinstance(geom, Polygon):
-            polys.append(geom)
-        else:
-            continue
-
-        for poly in polys:
-            outer = _ring_to_coords(poly.exterior.coords)
-            holes = [_ring_to_coords(r.coords) for r in poly.interiors]
-            # h3 v4 polygon_to_cells signature: (LatLngPoly, res)
-            shape = h3.LatLngPoly(outer, *holes) if holes else h3.LatLngPoly(outer)
-            cells = h3.polygon_to_cells(shape, H3_RES)
-            for c in cells:
-                out[c] = sifra
-
-    log(f"  → {len(out):,} h3 cells assigned in {time.time()-t0:.1f}s")
-    return out
-
-
 def patch_cell_demand(h3_to_sifra: dict[str, int]) -> None:
     log("Patching cell_demand_lite.json …")
     t0 = time.time()
@@ -218,7 +182,7 @@ def patch_suggestions(obcine: gpd.GeoDataFrame) -> None:
 
 def main() -> None:
     log(f"Reading {OBCINE_GEOJSON.relative_to(ROOT)} …")
-    obcine = gpd.read_file(OBCINE_GEOJSON).to_crs(4326)
+    obcine = load_obcine()
     log(f"  {len(obcine)} polygons")
 
     demographics = load_indicators()
