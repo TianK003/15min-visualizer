@@ -1,261 +1,293 @@
 # 15min Slovenija
 
-> **Team GEOGuessr** · Built at [GEO Slovenija](https://www.geo-slovenija.si) Hackathon (May 15–16, 2026)
+> **Ekipa GEOGuessr** · [GEO Slovenija](https://www.geo-slovenija.si) Hackathon (15.–16. maj 2026)
 
-The "15-minute city" concept promises that every resident can reach daily essentials - groceries, healthcare, schools, transit, parks - within a 15-minute walk. But nobody had measured this for an entire country, at house-block resolution, using real road-network routing. Until now.
-
-15min Slovenija scores **every populated point in Slovenia** from 0 to 8 across eight daily-needs categories, using real walking and cycling isochrones computed over the entire OpenStreetMap road graph. The result: a single interactive map that answers "How livable is this exact spot?" for 1.08 million H3 hexagonal cells at ~66 m resolution.
-
-We processed **37,622 amenities × 3 isochrone contours = 112,866 walking polygons** via a local Valhalla routing engine in under 2 minutes, then spatial-joined them against the Kontur population grid to produce a per-cell livability score - all during a 24-hour hackathon. The precomputed dataset ships as a single ~3 MB gzipped JSON; the browser aggregates it client-side across zoom levels via `h3-js cellToParent` with zero server roundtrips.
-
-Our demo shows:
-- **Ljubljana center** → 8/8 (all daily needs within 15 min walk)
-- **Maribor suburbs** → 5/8 (missing niche services and workplaces)
-- **Alpine village in Bohinj** → 1/8 (only a bus stop nearby)
-- **Investor mode** → flips the map to show unmet demand: `population × (1 − already_served)`, revealing exactly where new facilities would have the most impact
-
-The platform includes an **AI-powered natural-language search** (OpenRouter LLM): describe your life situation in Slovenian - *"sva mlada družina, delava v Ljubljani"* - and the system extracts required categories, finds the best-scoring cells near your target city, and flies the map there. Built on Supabase Postgres + PostGIS with auto-generated REST APIs, live Swagger UI documentation, and full data provenance for every layer.
-
-This isn't a mockup. Every hexagon is backed by real isochrone geometry, real population data, and real amenity locations - fully reproducible from open data.
+![Demo potrošniškega pogleda](data/readme/potrosnik.gif)
 
 ---
 
-## Table of Contents
+## O projektu
 
-- [Features](#features)
-- [Architecture](#architecture)
-- [Tech Stack](#tech-stack)
-- [Repository Structure](#repository-structure)
-- [Getting Started](#getting-started)
-  - [Prerequisites](#prerequisites)
-  - [Quick Start (6 steps)](#quick-start-6-steps)
-  - [Detailed Setup (WSL2 on Windows)](#detailed-setup-wsl2-on-windows)
-- [ETL Pipeline](#etl-pipeline)
-- [Environment Variables](#environment-variables)
-- [API Documentation](#api-documentation)
-- [Daily Development Workflow](#daily-development-workflow)
-- [Troubleshooting](#troubleshooting)
-- [Data Sources](#data-sources)
-- [License](#license)
+O »15-minutnih soseskah« — torej naseljih, kjer lahko vsakdanje obveznosti (trgovino, šolo, zdravnika, park, postajo) opraviš peš ali s kolesom v 15 minutah — se v Sloveniji govori že leta. Manjka pa karta, ki bi z dejanskimi podatki pokazala, **kje pri nas tak način življenja v resnici obstaja in kje šele bo**. Naredili smo jo.
 
----
+15min Slovenija pokrije **celotno državo**, ne le nekaj primerov: vsak naseljen del Slovenije, od centra Ljubljane do najmanjše vasi v Beli krajini, je analiziran na ločljivosti približno enega hišnega bloka (~66 m). Skupaj **1,08 milijona poseljenih celic**, **37 622 dnevnih dobrin** iz OpenStreetMap in **112 866 pešhodnih izokron**, izračunanih nad celotnim cestnim omrežjem Slovenije z routing engine-om Valhalla. Rezultat ni teoretična ocena — vsak rezultat je naslonjen na realno pot po obstoječih cestah.
 
-## Features
+Posamezne ocene niso bistvo. Karta je. **Šele ko pogledaš celotno državo na isti karti, vidiš sliko, ki je v razpravah o urejanju mest manjkala** — koliko Slovenije v resnici dosega standard 15-minutnih sosesk, kje so vrzeli največje in kje bi bil vpliv nove storitve največji. Prvič smo lahko jasno pokazali, da imajo le največja mesta — Ljubljana, Maribor, Celje, Kranj, Koper — predele s polno pokritostjo, medtem ko velika večina države dnevne obveznosti pogojuje z avtom.
 
-### Citizen View ("Potrošnik")
-- **Address search** - Photon (primary) + Nominatim (fallback) geocoder, scoped to Slovenia
-- **Scorecard** - click any hexagonal cell to see its 0–8 livability score with per-category breakdown and travel times
-- **Amenity pins** - category-colored markers for every reachable amenity, with walking/cycling time badges
-- **Live isochrone overlay** - real-time 15-minute walking/cycling polygon via Valhalla, rendered as a translucent overlay
-- **Walk / Bike toggle** - switches the entire view (score, travel times, isochrone, route animations) between pedestrian and bicycle profiles
-- **Animated route paths** - click a scorecard category row to see animated paths to every reachable amenity in that category, with a glow effect at the path head
+### Kaj naredi ta projekt drugače
 
-### Investor View ("Investitor")
-- **Demand heatmap** - `population × (1 − category_satisfied)` reveals underserved areas
-- **Category filter pills** - filter by any of 8 categories to find specific gaps (e.g., "Where do people need a pharmacy?")
-- **Facility suggestion pins** - pre-computed optimal placement suggestions with rationale tooltips
-- **Unpopulated masking** - forests, mountains, and lakes synthesized client-side from municipality polygons
-- **Color-blind-safe palette** - 4-step viridis with dark-purple "negligible" zone for fully served cells
+- **Cela Slovenija, ne vzorec.** 212 občin, 1,08 milijona celic, vsaka povezljiva z izvirnimi podatki.
+- **Dva uporabniška vidika v enem produktu.** Pogled **»Potrošnik«** odgovarja na *»kje bi mi bilo dobro živeti?«*; pogled **»Investitor«** odgovarja na *»kje bi nova storitev imela največji učinek?«* (povpraševanje = `populacija × (1 − že pokrito)`).
+- **AI svetovalec v slovenščini.** Opišeš situacijo (»sva mlada družina, delava v Ljubljani in Mariboru«), aplikacija ti predstavi 5 najprimernejših lokacij. Model LLM (`minimax/minimax-m2.7` prek OpenRouter) prevede prosti opis v strukturirano poizvedbo (kategorije, ciljno mesto, uteži), PostgreSQL pa po tej shemi vrne rangirano listo celic.
+- **Konkretni predlogi gradnje, ne samo barvni zemljevidi.** V investitorskem pogledu pripravimo pred-izračunane predloge konkretnih parcel, kjer bi nova storitev največ pomenila. Izvzamemo zavarovana območja (ARSO) in degradirana zemljišča (CRP), predloge gradnje pa povežemo z eProstorjem in demografskim profilom okolice (zdravstvo poudari delež 65+, izobraževanje delež otrok 0–14).
+- **Realna pot, ne zračna razdalja.** Vsaka 15-minutna izokrona izračunana s pešhodno/kolesarsko hitrostjo nad celotnim cestnim grafom Slovenije, ne kot krog okrog amenities.
+- **Reproducibilno iz odprtih podatkov.** OSM (Geofabrik), GURS, ARSO, CRP, eProstor, Kontur. Vsak korak ETL cevovoda je ponovljiv z eno skripto.
+- **Zasebnost po načelu.** Naslovi se v iskalniku nikjer ne shranjujejo. Geokodiranje teče preko Photona/Nominatima brez naših strežnikov.
+- **Javen REST API + Swagger UI.** Vsa baza je dostopna preko PostgREST; ročno vzdrževan OpenAPI 3.1 spec na `/openapi.json`.
 
-### Cross-Cutting
-- **Client-side multi-scale aggregation** - 1.08M cells at res-10, aggregated to ~450 hexes at country zoom via `h3.cellToParent()` in <5 ms
-- **Municipality choropleth** - low-zoom view colors 212 občine by mean score with population stats on hover
-- **Light / dark theme** - toggle in the bottom-left corner
-- **Permalink URLs** - every map state (`#lng/lat/zoom/h3`) is encoded in the URL for sharing
-- **AI assistant** - natural-language search powered by OpenRouter LLM
-- **Data provenance panel** ("Izvor podatkov") - every dataset listed with source, license, count, and explanation
-- **REST API + Swagger UI** - auto-generated OpenAPI docs at `/api-docs`
+### Kaj smo s tem produktom dokazali
+
+1. **15-minutne soseske v Sloveniji niso pravilo, ampak izjema.** Polno pokritost (8/8) dosegajo le predeli največjih mestnih središč — Ljubljana, Maribor, Celje, Kranj, Koper. Razlika med »največja mesta« in »ostala Slovenija« je v dnevni dosegljivosti veliko ostrejša, kot bi pričakovali iz javnih razprav.
+2. **Investitorski pogled prikaže konkretne lokacije priložnosti.** V Mariboru, Murski Soboti in Novi Gorici obstajajo predeli z visoko populacijo in pomanjkljivo dostopnostjo do izobraževanja ali zdravstva — natanko tam, kjer bi nova storitev imela največji učinek na 15-minutno dostopnost.
+3. **Dnevna dostopnost s kolesom drastično spremeni sliko.** Preklop na kolesarski profil podvoji ali potroji pokritost v primestjih največjih mest — kar je nezahteven, a v javnih razpravah malo prisoten argument za vlaganja v kolesarsko infrastrukturo.
 
 ---
 
-## Architecture
+## Kazalo
 
-The system is split into two deliberately decoupled phases:
+- [Funkcionalnosti](#funkcionalnosti)
+- [Arhitektura](#arhitektura)
+- [Tehnologije](#tehnologije)
+- [Postavitev repa](#postavitev-repa)
+- [Namestitev](#namestitev)
+  - [Predpogoji](#predpogoji)
+  - [Hitri zagon (6 korakov)](#hitri-zagon-6-korakov)
+  - [Podrobna namestitev (WSL2 na Windows)](#podrobna-namestitev-wsl2-na-windows)
+- [ETL cevovod](#etl-cevovod)
+- [Spremenljivke okolja](#spremenljivke-okolja)
+- [API dokumentacija](#api-dokumentacija)
+- [Vsakdanji razvojni postopek](#vsakdanji-razvojni-postopek)
+- [Odpravljanje težav](#odpravljanje-težav)
+- [Viri podatkov](#viri-podatkov)
+- [Osem kategorij](#osem-kategorij)
+- [Licenca](#licenca)
+
+---
+
+## Funkcionalnosti
+
+### Potrošniški pogled (»Potrošnik«)
+
+- **Iskalnik naslovov** — Photon kot primarni geocoder, Nominatim kot rezerva. Omejeno na slovenski bbox, najmanj 5 znakov; podpira tudi prilepljen `lat,lng`.
+- **Scorecard celice** — klik na poljubno H3 celico prikaže oceno 0–8 (barvni »badge«), čas dosega po vsaki kategoriji in razširljiv seznam najbližjih dobrin (z imenom in časom v minutah).
+- **Pini dobrin** — kategorijsko obarvani markerji za vsako dosegljivo dobrino z značkami časa hoje ali kolesarjenja.
+- **Živi 15-minutni izokron** — preko Valhalle, narisan kot prosojni poligon nad zemljevidom.
+- **Preklop Hoja / Kolo** — celoten pogled (ocena, čas dobrin, izokron, animirane poti) se preusmeri na pravi Valhalla profil (`pedestrian` 4 km/h ali `bicycle` 13 km/h, profil Hybrid).
+- **Animirane poti do dobrin** — klik na vrstico kategorije v Scorecardu nariše časovno animirane poti do vsake dosegljive dobrine v barvi kategorije, s svetlobnim učinkom na čelu poti.
+- **Kartica občine** — pri oddaljenem pogledu klik na občino odpre kartico s povprečno oceno, prebivalstvom, gostoto in razčlenjenim deležem zadetih kategorij.
+
+### Investitorski pogled (»Investitor«)
+
+- **Heatmap povpraševanja** — `populacija × (1 − pokritje_kategorije)` razkrije podpopolne predele.
+- **Filter po kategoriji** — pillsi za vseh 8 kategorij omogočajo iskanje konkretnih vrzeli (npr. *»kje manjka vrtcev?«*).
+- **Predlogi gradnje (pini)** — pred-izračunane konkretne parcele iz eProstor, kjer bi nova storitev imela največji učinek. Pini se obarvajo po demografskem profilu okolice (zdravstvo poudari delež 65+, izobraževanje delež otrok 0–14).
+- **Izvzemanje neprimernih območij** — ARSO zavarovana območja in degradirana zemljišča iz CRP se odštejejo, da priporočila padejo le na realno gradljive parcele.
+- **Maskiranje neposeljenih predelov** — gozdovi, hribi in jezera sintetizirani na strani odjemalca iz občinskih poligonov.
+- **Barvno-slepe prijazna paleta** — 4-stopenjska viridis z opacitetjo, ki se ujema potrošniškemu pogledu.
+
+### Skupno za oba pogleda
+
+- **Klient-side multi-scale agregacija** — 1,08 milijona celic pri res-10, agregiranih na ~450 šesterokotnikov pri pogledu na cele državo preko `h3.cellToParent()`, manj kot 5 ms.
+- **Občinski choropleth** — pri oddaljenem pogledu 212 občin pobarvanih po povprečni oceni s statistiko prebivalstva na hover.
+- **Svetla / temna tema** — gumb v levem spodnjem kotu (zaradi čitljivosti aplikacija ob vsakem zagonu zažene v svetli temi).
+- **Trajni linki (permalinki)** — vsak premik, zoom in klik zapiše `#lng/lat/zoom/h3` v URL; deljenje linka pripelje prejemnika na natanko isti pogled.
+- **AI svetovalec** — naravnojezično iskanje v slovenščini, prek OpenRouter LLM.
+- **Panel »Izvor podatkov«** — vsi viri (OSM, GURS, ARSO, CRP, eProstor, Kontur, OpenFreeMap) s številom enot, licencami, kratko utemeljitvijo in povezavo na izvirnik.
+- **REST API + Swagger UI** — avtomatsko generirani PostgREST + ročno vzdrževan OpenAPI 3.1 spec na [`/api-docs`](http://localhost:3000/api-docs).
+
+---
+
+## Arhitektura
+
+Sistem je razdeljen v dve namerno ločeni fazi:
 
 ```mermaid
 flowchart TB
-  subgraph ETL["Phase 1 · ETL / Precompute (Python, runs once)"]
+  subgraph ETL["Faza 1 · ETL / pred-izračun (Python, lokalno, enkrat)"]
     direction LR
     OSM[Geofabrik OSM PBF] --> PY[Python ETL · GeoPandas + H3]
-    ARSO[ARSO Protected Areas] --> PY
-    GURS[GURS Municipality GeoJSON] --> PY
-    KON[Kontur Population H3] --> PY
-    PY --> VAL[Valhalla Docker · isochrones]
-    VAL --> SJ[Spatial Join · score per cell]
+    ARSO[ARSO zavarovana območja] --> PY
+    GURS[GURS občinske meje] --> PY
+    KON[Kontur populacija H3] --> PY
+    CRP[CRP degradirana območja] --> PY
+    EPR[eProstor parcele] --> PY
+    PY --> VAL[Valhalla Docker · izokrone]
+    VAL --> SJ[Spatial join · ocena na celico]
     SJ --> DB[(Supabase Postgres + PostGIS)]
     SJ --> JSON["cell_scores_lite.json<br/>+ cell_population_lite.json"]
   end
 
-  subgraph LIVE["Phase 2 · Live Runtime (Browser)"]
+  subgraph LIVE["Faza 2 · živo izvajanje (brskalnik)"]
     direction LR
-    USER[User Browser] --> NX[Next.js 14]
-    NX --> MAP[OpenFreeMap Basemap]
-    NX --> CELL["Static JSON<br/>~3 MB · client aggregation"]
-    NX --> SB[Supabase REST<br/>scorecard + amenities]
-    NX --> PH[Photon Geocoder]
-    NX --> VH[Valhalla<br/>live isochrone on click]
+    USER[Brskalnik uporabnika] --> NX[Next.js 14]
+    NX --> MAP[OpenFreeMap basemap]
+    NX --> CELL["Statični JSON<br/>~3 MB · agregacija v brskalniku"]
+    NX --> SB[Supabase REST<br/>Scorecard + dobrine]
+    NX --> PH[Photon geocoder]
+    NX --> VH[Valhalla<br/>izokron na klik]
+    NX --> AI[OpenRouter LLM<br/>AI iskanje]
   end
 
   JSON -.serves.-> CELL
   DB -.RPC.-> SB
 ```
 
-**Phase 1 (ETL):** Extract amenities from OSM → compute 112,866 isochrones via Valhalla → spatial-join against 1.08M populated H3 cells → export scores as static JSON + upload to Supabase.
+**Faza 1 (ETL):** Ekstrakcija dobrin iz OSM → izračun 112 866 izokron preko Valhalle → spatial join s 1,08 milijona poseljenih H3 celic → izvoz ocen kot statični JSON in nalaganje v Supabase.
 
-**Phase 2 (Runtime):** Next.js loads the score JSON once on page load. All zoom-level changes are handled client-side via `h3.cellToParent()` aggregation - no tile server, no resolution-change roundtrips. The only live infrastructure is Valhalla (for on-click isochrones) and Supabase (for scorecard details and amenity pins).
+**Faza 2 (živo):** Next.js naloži JSON enkrat na začetku. Spremembe zooma se obdelajo na strani odjemalca preko `h3.cellToParent()` brez tile-server roundtripov. Edina »živa« infrastruktura je Valhalla (za izokrone na klik), Supabase (za podrobnosti Scorecarda in pine dobrin) in OpenRouter (za AI iskanje).
 
 ---
 
-## Tech Stack
+## Tehnologije
 
 ### Frontend
-| Technology | Purpose |
+
+| Tehnologija | Namen |
 |---|---|
-| **Next.js 14** (App Router) | Server-side rendering, API routes, static asset serving |
-| **MapLibre GL JS** | WebGL map rendering with OpenFreeMap vector tiles |
-| **deck.gl** | `H3HexagonLayer` for hexagonal heatmaps, `PathLayer` for animated routes, `PolygonLayer` for isochrone overlays |
-| **h3-js** | Client-side H3 cell aggregation across zoom levels |
-| **Supabase JS** | Database queries for scorecard data and amenity details |
-| **Zod** | Runtime schema validation for API payloads |
-| **TypeScript** | Type safety across the frontend codebase |
+| **Next.js 14** (App Router) | SSR, API poti, statične datoteke |
+| **MapLibre GL JS** | WebGL renderiranje z OpenFreeMap vektorskimi ploščicami |
+| **deck.gl** | `H3HexagonLayer`, `PathLayer`, `GeoJsonLayer`, `IconLayer`, `TripsLayer` |
+| **h3-js** | Klient-side H3 agregacija po zoomu |
+| **Vercel AI SDK + OpenRouter** | Strukturiran LLM izhod (`generateObject` + Zod shema) |
+| **Supabase JS** | Klici v PostgREST in RPC |
+| **Zod** | Validacija API teles |
+| **TypeScript** | Tipska varnost frontenda |
 
 ### Backend
-| Technology | Purpose |
-|---|---|
-| **Python 3.12** | ETL pipeline orchestration |
-| **GeoPandas + Shapely** | Geospatial data processing and spatial joins |
-| **Valhalla** (Docker) | Walking and cycling isochrone computation over OSM road network |
-| **Supabase** (Postgres 16 + PostGIS 3.4) | Database with spatial indexing, auto-generated REST API, and RLS |
-| **H3** (Python + PostgreSQL extension) | Hexagonal spatial indexing at resolution 10 |
-| **OpenRouter** | LLM API for AI-powered natural-language location search |
 
-### External Services
-| Service | Role | Cost |
+| Tehnologija | Namen |
+|---|---|
+| **Python 3.12** | Orkestracija ETL cevovoda |
+| **GeoPandas + Shapely** | Geoprostorska obdelava in spatial join |
+| **Valhalla** (Docker) | Izračun izokron in poti nad OSM cestnim omrežjem |
+| **Supabase** (Postgres 16 + PostGIS 3.4) | Baza s prostorskim indeksom, generiranim REST API in RLS |
+| **H3** (Python + PostgreSQL ekstenzija) | Šesterokotno prostorsko indeksiranje (res-10) |
+| **OpenRouter** | LLM API (model `minimax/minimax-m2.7`) za naravnojezično iskanje |
+
+### Zunanje storitve
+
+| Storitev | Vloga | Strošek |
 |---|---|---|
-| **OpenFreeMap** | Vector tile basemap (positron / dark-matter styles) | Free, no key |
-| **Photon** (Komoot) | Address autocomplete geocoder | Free, no key |
-| **Nominatim** | Fallback geocoder | Free, rate-limited |
+| **OpenFreeMap** | Vektorske ploščice (positron / dark-matter) | Brezplačno, brez ključa |
+| **Photon** (Komoot) | Avtokomplet naslovov | Brezplačno, brez ključa |
+| **Nominatim** | Rezervni geocoder | Brezplačno, omejeno |
 
 ---
 
-## Repository Structure
+## Postavitev repa
 
 ```
 15min-visualizer/
-├── frontend/                    # Next.js 14 frontend application
-│   ├── app/                     # App Router pages + API routes
-│   │   ├── api/llm/             # AI search endpoint (OpenRouter)
-│   │   ├── api/valhalla/        # Valhalla proxy (avoids CORS)
-│   │   ├── api-docs/            # Swagger UI page
+├── frontend/                    # Next.js 14 frontend
+│   ├── app/                     # App Router poti + API
+│   │   ├── api/llm/             # AI iskanje v1 (OpenRouter)
+│   │   ├── api/llm-search/      # AI iskanje v2 (generateObject + ranking weights)
+│   │   ├── api/valhalla/        # Valhalla proxy (obvod CORS)
+│   │   ├── api-docs/            # Swagger UI
+│   │   ├── openapi.json/        # Ročno vzdrževan OpenAPI 3.1 spec
 │   │   ├── globals.css          # Design system (CSS custom properties)
-│   │   ├── layout.tsx           # Root layout with theme initialization
-│   │   └── page.tsx             # Main map page
-│   ├── components/              # React components
-│   │   ├── Map.tsx              # Core map component (~82 KB, all layers + interactions)
-│   │   ├── Scorecard.tsx        # Cell detail panel with per-category breakdown
-│   │   ├── AddressSearch.tsx    # Photon/Nominatim geocoder input
-│   │   ├── ChatBox.tsx          # AI assistant chat interface
-│   │   ├── IzvorPodatkov.tsx    # Data provenance panel
-│   │   ├── ObcinaInfoCard.tsx   # Municipality hover info card
-│   │   └── ThemeToggle.tsx      # Light/dark theme switcher
-│   ├── lib/                     # Shared utilities
-│   │   ├── categories.ts        # 8 category definitions (icons, colors, labels)
-│   │   ├── supabase.ts          # Supabase client + query helpers
-│   │   ├── valhalla.ts          # Valhalla API wrapper
-│   │   ├── suggestions.ts       # Investor mode facility suggestion logic
-│   │   ├── theme.ts             # Theme management
-│   │   └── geo.ts               # Geospatial utilities
-│   └── public/data/             # Static JSON datasets
+│   │   ├── layout.tsx           # Root layout z inicializacijo teme
+│   │   └── page.tsx             # Glavna karta
+│   ├── components/              # React komponente
+│   │   ├── Map.tsx              # Karta z vsemi layerji in interakcijami
+│   │   ├── Scorecard.tsx        # Panel s podrobnostmi celice
+│   │   ├── ResultCard.tsx       # AI rezultati (top 5)
+│   │   ├── ChatBox.tsx          # AI klepetalnik (v1 flow)
+│   │   ├── AddressSearch.tsx    # Photon/Nominatim iskalnik
+│   │   ├── IzvorPodatkov.tsx    # Panel z viri podatkov
+│   │   ├── ObcinaInfoCard.tsx   # Kartica občine
+│   │   └── ThemeToggle.tsx      # Svetla/temna tema
+│   ├── lib/                     # Pomožni moduli
+│   │   ├── categories.ts        # Definicije 8 kategorij (ikone, barve, oznake)
+│   │   ├── llm-search.ts        # SearchSpec Zod shema + SYSTEM_PROMPT
+│   │   ├── supabase.ts          # Supabase klient + pomagala
+│   │   ├── valhalla.ts          # Valhalla API ovojnica
+│   │   ├── suggestions.ts       # Logika predlogov gradnje
+│   │   ├── theme.ts             # Upravljanje teme
+│   │   └── geo.ts               # Geoprostorska pomagala
+│   └── public/data/             # Statične JSON datoteke
 ├── backend/
-│   ├── etl/                     # Python ETL pipeline (scripts 01–09)
-│   ├── valhalla/                # Valhalla Dockerfile + config
-│   └── supabase/                # Supabase config + SQL migrations
+│   ├── etl/                     # Python ETL cevovod (skripte 01–09)
+│   ├── valhalla/                # Valhalla Dockerfile + konfiguracija
+│   └── supabase/                # Supabase config + SQL migracije
 ├── data/
-│   ├── 15min-slo/               # Raw data downloads (gitignored)
-│   └── DATA_SOURCES.md          # Dataset catalog with download commands
-└── docs/                        # Project documentation
-    ├── PLAN.md                  # Locked design decisions + scoring formula
-    ├── ARCHITECTURE.md          # System architecture reference
-    ├── TASKS.md                 # Roadmap with priority tags (P0/P1/P2)
-    └── CHECKLIST.md             # Environment provisioning checklist
+│   ├── 15min-slo/               # Surovi prenosi (gitignored)
+│   ├── readme/                  # Slike za README (gifi, screenshoti)
+│   └── DATA_SOURCES.md          # Katalog virov z ukazi za prenos
+└── docs/                        # Projektne dokumente
+    ├── PLAN.md                  # Fiksne odločitve in formula
+    ├── ARCHITECTURE.md          # Sistemski opis
+    ├── TASKS.md                 # Roadmap s prioritetami (P0/P1/P2)
+    └── CHECKLIST.md             # Kontrolni seznam priprave okolja
 ```
 
 ---
 
-## Getting Started
+## Namestitev
 
-### Prerequisites
+### Predpogoji
 
-- **Docker Desktop** with WSL2 integration enabled
-- **Node.js 20+** with **pnpm** (via `corepack enable pnpm`)
-- **Python 3.12** with `venv`
+- **Docker Desktop** z omogočeno WSL2 integracijo
+- **Node.js 20+** z **pnpm** (preko `corepack enable pnpm`)
+- **Python 3.12** z `venv`
 - **Supabase CLI**
 
-### Quick Start (6 steps)
+### Hitri zagon (6 korakov)
 
 ```bash
-# 1. Clone the repository (inside WSL filesystem, not /mnt/c)
+# 1. Klon repa (znotraj WSL filesystema, ne /mnt/c)
 git clone https://github.com/TianK003/15min-visualizer.git ~/15min-visualizer
 cd ~/15min-visualizer
 
-# 2. Set up the Python backend
+# 2. Python backend
 cd backend
 python3.12 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 cd ..
 
-# 3. Install frontend dependencies
+# 3. Frontend odvisnosti
 cd frontend && pnpm install && cd ..
 
-# 4. Configure environment variables
+# 4. Spremenljivke okolja
 cp backend/.env.example backend/.env
-# Create frontend/.env.local with:
+# Ustvarite frontend/.env.local z:
 #   NEXT_PUBLIC_SUPABASE_URL=/sb
 #   SUPABASE_INTERNAL_URL=http://127.0.0.1:54321
-#   NEXT_PUBLIC_SUPABASE_ANON_KEY=<from `supabase status --output env`>
+#   NEXT_PUBLIC_SUPABASE_ANON_KEY=<iz `supabase status --output env`>
 #   NEXT_PUBLIC_USE_REMOTE_DATA=true
 #   VALHALLA_URL=http://127.0.0.1:8002
+#   OPENROUTER_API_KEY=<vaš ključ> (neobvezno, za AI iskanje)
 
-# 5. Start local Supabase + Valhalla
+# 5. Lokalni Supabase + Valhalla
 cd backend && supabase start && cd ..
 cd backend/valhalla
 docker build -t valhalla-slo .
 docker run -d -p 8002:8002 --name valhalla-slo valhalla-slo
 cd ../..
 
-# 6. Start the dev server
+# 6. Razvojni strežnik
 cd frontend && pnpm dev
-# Open http://localhost:3000
+# Odprite http://localhost:3000
 ```
 
-> **Note:** Raw datasets (OSM, Kontur, GURS, ARSO) are too large for git. Follow [`data/DATA_SOURCES.md`](./data/DATA_SOURCES.md) for single-command downloads.
+> **Opomba:** Surovi podatki (OSM, Kontur, GURS, ARSO) so preveliki za git. Sledite [`data/DATA_SOURCES.md`](./data/DATA_SOURCES.md) za enojne ukaze prenosov.
 
-### Detailed Setup (WSL2 on Windows)
+### Podrobna namestitev (WSL2 na Windows)
 
 <details>
-<summary>Click to expand full installation guide</summary>
+<summary>Razširite za celovit vodič namestitve</summary>
 
-#### 1. Install WSL2 + Ubuntu
+#### 1. Namestitev WSL2 + Ubuntu
 
-In **PowerShell as Administrator**:
+V **PowerShell kot administrator**:
 ```powershell
 wsl --install -d Ubuntu
 ```
-Reboot, launch Ubuntu from Start menu, and create a user.
+Znova zaženite, odprite Ubuntu iz Start menija in ustvarite uporabnika.
 
-#### 2. Docker Desktop with WSL2
+#### 2. Docker Desktop z WSL2
 
-Install [Docker Desktop for Windows](https://www.docker.com/products/docker-desktop/). Enable WSL integration under **Settings → Resources → WSL Integration**.
+Namestite [Docker Desktop za Windows](https://www.docker.com/products/docker-desktop/). Omogočite WSL integracijo pod **Settings → Resources → WSL Integration**.
 
 ```bash
-docker --version   # verify from WSL terminal
+docker --version   # preverite iz WSL terminala
 ```
 
-#### 3. Development tools (WSL terminal)
+#### 3. Razvojna orodja (WSL terminal)
 
 ```bash
-# Build essentials
+# Osnovna orodja
 sudo apt update && sudo apt install -y git curl build-essential
 
 # Node.js 20 LTS + pnpm
@@ -274,12 +306,12 @@ tar -xzf /tmp/supabase.tar.gz -C ~/.local/bin/ supabase
 echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
 exec $SHELL
 
-# Verify all tools
+# Preverite vse
 git --version && node --version && pnpm --version && python3.12 --version
 docker --version && supabase --version
 ```
 
-#### 4. Clone the repository
+#### 4. Klon repa
 
 ```bash
 cd ~
@@ -287,21 +319,20 @@ git clone https://github.com/TianK003/15min-visualizer.git
 cd 15min-visualizer
 ```
 
-> **Important:** Keep the repo on the WSL filesystem (`~/15min-visualizer`, **not** `/mnt/c/...`). Cross-filesystem I/O is ~10× slower and breaks hot-reload.
+> **Pomembno:** Repo naj bo na WSL filesystemu (`~/15min-visualizer`, **ne** `/mnt/c/...`). Med-filesystemski I/O je ~10× počasnejši in zlomi hot-reload.
 
-#### 5. Download raw data
+#### 5. Prenos surovih podatkov
 
-Follow [`data/DATA_SOURCES.md`](./data/DATA_SOURCES.md) - each source has a single `curl` command. Expected files:
+Sledite [`data/DATA_SOURCES.md`](./data/DATA_SOURCES.md) — vsak vir ima en `curl` ukaz. Pričakovane datoteke:
 
 ```
 data/15min-slo/slovenia-latest.osm.pbf
 data/15min-slo/obcine.geojson
 data/15min-slo/zavarovana_si.geojson
-data/15min-slo/natura2000_si.geojson
 data/15min-slo/kontur_population_SI.gpkg
 ```
 
-#### 6. Python virtual environment
+#### 6. Python virtualno okolje
 
 ```bash
 cd backend
@@ -311,15 +342,15 @@ pip install -r requirements.txt
 cd ..
 ```
 
-#### 7. Frontend dependencies
+#### 7. Frontend odvisnosti
 
 ```bash
 cd frontend && pnpm install && cd ..
 ```
 
-#### 8. Environment configuration
+#### 8. Konfiguracija okolja
 
-**`backend/.env`** (copy from example, then fill in Supabase keys after step 9):
+**`backend/.env`** (kopirajte iz vzorca, dopolnite po koraku 9):
 ```bash
 cp backend/.env.example backend/.env
 ```
@@ -328,33 +359,34 @@ cp backend/.env.example backend/.env
 ```env
 NEXT_PUBLIC_SUPABASE_URL=/sb
 SUPABASE_INTERNAL_URL=http://127.0.0.1:54321
-NEXT_PUBLIC_SUPABASE_ANON_KEY=<paste PUBLISHABLE_KEY from supabase status>
+NEXT_PUBLIC_SUPABASE_ANON_KEY=<prilepite PUBLISHABLE_KEY iz supabase status>
 NEXT_PUBLIC_USE_REMOTE_DATA=true
 VALHALLA_URL=http://127.0.0.1:8002
+OPENROUTER_API_KEY=<vaš ključ za AI iskanje>
 ```
 
-The `/sb` proxy value is intentional - `next.config.mjs` rewrites `/sb/*` requests to `SUPABASE_INTERNAL_URL`, keeping all browser requests same-origin and avoiding WSL2 port-forwarding issues.
+Vrednost `/sb` je namerna — `next.config.mjs` prepiše `/sb/*` zahteve na `SUPABASE_INTERNAL_URL`, kar obide WSL2 port-forwarding težave.
 
-#### 9. Start Supabase
+#### 9. Zagon Supabase
 
 ```bash
 cd backend
-supabase start          # first run downloads ~1 GB of Docker images
+supabase start          # prvi zagon prenese ~1 GB Docker slik
 supabase status --output env
 ```
 
-Copy `SECRET_KEY` → `backend/.env` as `SUPABASE_SERVICE_KEY`, and `PUBLISHABLE_KEY` → `frontend/.env.local` as `NEXT_PUBLIC_SUPABASE_ANON_KEY`. Migrations in `backend/supabase/migrations/` are applied automatically.
+Prepišite `SECRET_KEY` → `backend/.env` kot `SUPABASE_SERVICE_KEY` in `PUBLISHABLE_KEY` → `frontend/.env.local` kot `NEXT_PUBLIC_SUPABASE_ANON_KEY`. Migracije iz `backend/supabase/migrations/` se aplicirajo samodejno.
 
-Local endpoints:
+Lokalne končne točke:
 - REST API: `http://127.0.0.1:54321`
 - Studio (DB UI): `http://127.0.0.1:54323`
 - Postgres: `postgresql://postgres:postgres@127.0.0.1:54322/postgres`
 
-#### 10. Build and start Valhalla
+#### 10. Gradnja in zagon Valhalla
 
 ```bash
 cd backend/valhalla
-docker build -t valhalla-slo .         # ~10 min, builds the SI routing graph
+docker build -t valhalla-slo .         # ~10 min, gradi SI routing graph
 docker run -d -p 8002:8002 --name valhalla-slo valhalla-slo
 cd ../..
 ```
@@ -366,191 +398,196 @@ curl -X POST http://localhost:8002/isochrone \
   -d '{"locations":[{"lat":46.0512,"lon":14.5061}],"costing":"pedestrian","contours":[{"time":15}],"polygons":true}'
 ```
 
-#### 11. Run the ETL pipeline
+#### 11. ETL cevovod
 
 ```bash
 cd backend
 source .venv/bin/activate
-python etl/01_extract_amenities.py     # ~30 s - OSM → 37,622 amenities
-python etl/02_isochrones.py            # ~1.3 min - 112,866 isochrones (resumable)
-python etl/03_score_cells.py           # ~30 s - 1,079,666 H3 cells scored
-python etl/05_export_population.py     # ~10 s - population sidecar JSON
-python etl/07_bin_cells_to_tiles.py    # ~5 s - partial-load shards
-python etl/08_flag_unbuildable.py      # ~20 s - mark protected-area cells
-python etl/06_upload_to_supabase.py    # ~30 s - upload all data to local Supabase
+python etl/01_extract_amenities.py     # ~30 s — OSM → 37 622 dobrin
+python etl/02_isochrones.py            # ~1.3 min — 112 866 izokron (nadaljevalno)
+python etl/03_score_cells.py           # ~30 s — 1 079 666 H3 celic ocenjenih
+python etl/05_export_population.py     # ~10 s — populacijski sidecar JSON
+python etl/07_bin_cells_to_tiles.py    # ~5 s — partial-load shards
+python etl/08_flag_unbuildable.py      # ~20 s — označi zavarovane celice
+python etl/06_upload_to_supabase.py    # ~30 s — naloži v lokalni Supabase
 cd ..
 ```
 
-> `06_upload_to_supabase.py` requires `SUPABASE_SERVICE_KEY` in `backend/.env`.
+> `06_upload_to_supabase.py` zahteva `SUPABASE_SERVICE_KEY` v `backend/.env`.
 
-#### 12. Start the dev server
+#### 12. Razvojni strežnik
 
 ```bash
 cd frontend && pnpm dev
 ```
 
-Open `http://localhost:3000` in your Windows browser.
+Odprite `http://localhost:3000` **v Windows brskalniku**.
 
 </details>
 
 ---
 
-## ETL Pipeline
+## ETL cevovod
 
-The ETL pipeline transforms raw open data into the scored hexagonal grid. Each script is idempotent and can be re-run independently.
+ETL cevovod pretvori surove odprte podatke v ocenjeno šesterokotno mrežo. Vsaka skripta je idempotentna in jo je mogoče pognati neodvisno.
 
-| Script | Input | Output | Runtime |
+| Skripta | Vhod | Izhod | Trajanje |
 |---|---|---|---|
-| `01_extract_amenities.py` | OSM PBF | 37,622 classified amenities in 8 categories | ~30 s |
-| `02_isochrones.py` | Amenities + Valhalla | 112,866 isochrone polygons (5/10/15 min) | ~1.3 min |
-| `03_score_cells.py` | Isochrones + Kontur population | 1,079,666 scored H3 cells + amenity associations | ~30 s |
-| `05_export_population.py` | Cell scores | Population sidecar JSON (res-9 aggregated) | ~10 s |
-| `07_bin_cells_to_tiles.py` | Cell scores | Partial-load shards for viewport-based loading | ~5 s |
-| `08_flag_unbuildable.py` | Protected areas | Cells flagged as non-buildable | ~20 s |
-| `06_upload_to_supabase.py` | All outputs | Data uploaded to Supabase Postgres | ~30 s |
-| `09_demographics.py` | SURS statistics | Municipality demographic indicators | ~15 s |
+| `01_extract_amenities.py` | OSM PBF | 37 622 klasificiranih dobrin v 8 kategorijah | ~30 s |
+| `02_isochrones.py` | Dobrine + Valhalla | 112 866 izokronskih poligonov (5/10/15 min) | ~1,3 min |
+| `03_score_cells.py` | Izokrone + Kontur populacija | 1 079 666 ocenjenih H3 celic + asociacije | ~30 s |
+| `05_export_population.py` | Ocene celic | Populacijski sidecar JSON (res-9 agregat) | ~10 s |
+| `07_bin_cells_to_tiles.py` | Ocene celic | Partial-load shards za viewport-loading | ~5 s |
+| `08_flag_unbuildable.py` | Zavarovana območja | Celice označene kot nepoznlive | ~20 s |
+| `09_demographics.py` | SURS statistika | Demografski indikatorji občin | ~15 s |
+| `06_upload_to_supabase.py` | Vsi izhodi | Podatki naloženi v Supabase Postgres | ~30 s |
 
-### When to re-run
+### Kdaj pognati ponovno
 
-| Trigger | Scripts to run |
+| Sprožilec | Skripte za pognati |
 |---|---|
-| OSM extract updated | `01` → `02` → `03` → `05` → `07` → `06` |
-| Scoring formula changed | `03` → `05` → `07` → `06` |
-| Population data updated | `05` → `06` |
-| Protected areas updated | `08` → `06` |
+| OSM ekstrakt posodobljen | `01` → `02` → `03` → `05` → `07` → `06` |
+| Spremenjena formula ocenjevanja | `03` → `05` → `07` → `06` |
+| Posodobljeni populacijski podatki | `05` → `06` |
+| Posodobljena zavarovana območja | `08` → `06` |
 
 ---
 
-## Environment Variables
+## Spremenljivke okolja
 
 ### `frontend/.env.local`
 
-| Variable | Description | Example |
+| Spremenljivka | Opis | Primer |
 |---|---|---|
-| `NEXT_PUBLIC_SUPABASE_URL` | Supabase REST URL (use `/sb` for WSL proxy) | `/sb` |
-| `SUPABASE_INTERNAL_URL` | Internal Supabase URL for server-side requests | `http://127.0.0.1:54321` |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase anonymous key (read-only RLS) | `eyJ...` |
-| `NEXT_PUBLIC_USE_REMOTE_DATA` | Load data from Supabase instead of static files | `true` |
+| `NEXT_PUBLIC_SUPABASE_URL` | Supabase REST URL (`/sb` za WSL proxy) | `/sb` |
+| `SUPABASE_INTERNAL_URL` | Interni Supabase URL za serverside klice | `http://127.0.0.1:54321` |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase anonimni ključ (samo-bralni RLS) | `eyJ...` |
+| `NEXT_PUBLIC_USE_REMOTE_DATA` | Naloži podatke iz Supabase namesto statičnih datotek | `true` |
 | `VALHALLA_URL` | Valhalla routing engine URL | `http://127.0.0.1:8002` |
-| `OPENROUTER_API_KEY` | OpenRouter API key for AI assistant (optional) | `sk-or-...` |
+| `OPENROUTER_API_KEY` | OpenRouter ključ za AI svetovalca (neobvezno) | `sk-or-...` |
+| `MODEL` | Override LLM modela (privzeto `minimax/minimax-m2.7`) | `minimax/minimax-m2.7` |
 
 ### `backend/.env`
 
-| Variable | Description |
+| Spremenljivka | Opis |
 |---|---|
 | `SUPABASE_URL` | Supabase REST endpoint |
-| `SUPABASE_SERVICE_KEY` | Supabase service role key (full access) |
+| `SUPABASE_SERVICE_KEY` | Supabase service-role ključ (polen dostop) |
 
 ---
 
-## API Documentation
+## API dokumentacija
 
-The application exposes a REST API auto-generated by Supabase PostgREST, plus custom Next.js API routes.
+Aplikacija izpostavlja REST API, ki ga samodejno generira Supabase PostgREST, ter ročno vzdrževane Next.js API poti.
 
 ### Swagger UI
 
-When the dev server is running, visit [`/api-docs`](http://localhost:3000/api-docs) for interactive API documentation with two tabs:
-- **Combined Documentation** - hand-written OpenAPI 3.1 covering Next.js routes and key Supabase tables
-- **Supabase (Live)** - auto-generated PostgREST spec
+Ob zagnanem razvojnem strežniku obiščite [`/api-docs`](http://localhost:3000/api-docs) za interaktivno API dokumentacijo z dvema zavihkoma:
+- **Združena dokumentacija** — ročno vzdrževan OpenAPI 3.1 (Next.js poti + ključne Supabase tabele/RPC)
+- **Supabase (živo)** — avtomatsko generirana PostgREST shema
 
-Raw OpenAPI JSON is available at [`/openapi.json`](http://localhost:3000/openapi.json).
+Surovi OpenAPI JSON je dostopen na [`/openapi.json`](http://localhost:3000/openapi.json).
 
-### Key Endpoints
+### Ključne končne točke
 
-| Endpoint | Method | Description |
+| Pot | Metoda | Opis |
 |---|---|---|
-| `/api/valhalla/{action}` | POST | Proxied Valhalla requests (isochrone, route) |
-| `/api/llm` | POST | AI-powered natural-language location search |
-| `/sb/rest/v1/cell_scores` | GET | Cell livability scores (PostgREST) |
-| `/sb/rest/v1/rpc/amenities_for_point` | POST | Amenities reachable from a given cell |
-| `/sb/rest/v1/rpc/llm_search_cells` | POST | Find best cells matching criteria |
-| `/sb/rest/v1/obcine` | GET | Municipality boundaries and statistics |
+| `/api/llm` | POST | AI iskanje v1 (kombiniran search + narrative) |
+| `/api/llm-search` | POST | AI iskanje v2 — strukturiran izhod z ranking_weights in `search_cells_v2` |
+| `/api/valhalla/{endpoint}` | POST | Proxy klici v Valhalla (`isochrone`, `route`, `locate`, `matrix`, `sources_to_targets`, `trace_route`) |
+| `/sb/rest/v1/cell_scores` | GET | Ocene dostopnosti celic (PostgREST) |
+| `/sb/rest/v1/obcine` | GET | Občinske meje in statistika |
+| `/sb/rest/v1/amenities` | GET | OSM dobrine po kategorijah |
+| `/sb/rest/v1/rpc/amenities_for_point` | POST | Dobrine dosegljive iz izhodišča v 15 min |
+| `/sb/rest/v1/rpc/llm_search_cells` | POST | Iskanje najboljših celic (v1) |
+| `/sb/rest/v1/rpc/search_cells_v2` | POST | Iskanje najboljših celic (v2 z utežmi in ciljno bližino) |
 
 ---
 
-## Daily Development Workflow
+## Vsakdanji razvojni postopek
 
-After the initial setup, the daily workflow is:
+Po prvi namestitvi je dnevni potek:
 
 ```bash
-# Start services (Docker Desktop must be running on Windows)
+# Zagon storitev (Docker Desktop mora teči na Windows)
 cd ~/15min-visualizer/backend
-supabase start                          # ~3 s if already initialized
-docker start valhalla-slo               # instant if already built
+supabase start                          # ~3 s, če je že inicializiran
+docker start valhalla-slo               # takojšen, če je že zgrajen
 cd ../frontend
 pnpm dev                                # → http://localhost:3000
 
-# Stop everything
+# Zaustavitev vsega
 cd ~/15min-visualizer/backend
 supabase stop
 docker stop valhalla-slo
-# Ctrl-C in the pnpm dev terminal
+# Ctrl-C v pnpm dev terminalu
 ```
 
-### Development commands
+### Razvojni ukazi
 
 ```bash
-pnpm dev          # Start Next.js dev server with hot reload
-pnpm typecheck    # Run TypeScript type checking (tsc --noEmit)
-pnpm build        # Production build (catches issues tsc misses)
+pnpm dev          # Next.js dev strežnik s hot reload
+pnpm typecheck    # TypeScript preverjanje tipov (tsc --noEmit)
+pnpm build        # produkcijski build (ujame stvari, ki jih tsc spregleda)
 pnpm lint         # ESLint
 ```
 
 ---
 
-## Troubleshooting
+## Odpravljanje težav
 
-| Symptom | Solution |
+| Simptom | Rešitev |
 |---|---|
-| `docker: command not found` in WSL | Docker Desktop not running or WSL integration not enabled. Check Docker Desktop → Settings → Resources → WSL Integration |
-| `permission denied` on Docker socket | `sudo chmod 666 /var/run/docker.sock` (needed after each Docker daemon restart) |
-| `pnpm: command not found` | `sudo corepack enable pnpm`, then restart WSL terminal |
-| "Failed to fetch" in browser | WSL2 doesn't forward port 54321. Use `NEXT_PUBLIC_SUPABASE_URL=/sb` (not a raw URL) in `.env.local` |
-| Yellow "sample data" banner | Supabase not running or data not uploaded. Run `supabase status` then `06_upload_to_supabase.py` |
-| Scorecard stuck on loading | Check devtools → Network for 401 (key mismatch in `.env.local`) or 404 (ETL upload not run) |
-| Valhalla returns 405 in browser | Expected - the app calls Valhalla via `/api/valhalla/*` server proxy, not directly |
-| Photon returns 400 | Known issue: `&lang=sl` is unsupported. The codebase already omits it |
-| `/api/llm` returns 501 | `OPENROUTER_API_KEY` not set in `.env.local` |
-| Slow file-watch / `EBUSY` | Repo is on `/mnt/c/...`. Move it to the WSL filesystem (`~/`) |
-| `supabase start` hangs on pulling | Docker Desktop just woke up - wait a minute, or manually `docker pull` the image |
-| ETL `08_flag_unbuildable.py` fails | Migrations not applied. Run `supabase db reset --local` |
+| `docker: command not found` v WSL | Docker Desktop ne teče ali WSL integracija ni omogočena. Preverite Docker Desktop → Settings → Resources → WSL Integration |
+| `permission denied` na Docker socketu | `sudo chmod 666 /var/run/docker.sock` (potrebno po vsakem ponovnem zagonu Docker daemonsa) |
+| `pnpm: command not found` | `sudo corepack enable pnpm`, nato znova odprite WSL terminal |
+| »Failed to fetch« v brskalniku | WSL2 ne forwarda port 54321. Uporabite `NEXT_PUBLIC_SUPABASE_URL=/sb` (ne surov URL) v `.env.local` |
+| Rumeno opozorilo o »vzorčnih podatkih« | Supabase ne teče ali nalaganje ni izvedeno. Zaženite `supabase status` in nato `06_upload_to_supabase.py` |
+| Scorecard obstane na »Nalagam …« | DevTools → Network: 401 = neujemajoč ključ v `.env.local`; 404 = ETL upload ni bil pognan |
+| Valhalla vrne 405 v brskalniku | Po načrtu — aplikacija kliče Valhalla preko `/api/valhalla/*` proxyja, ne direktno |
+| Photon vrne 400 | Znana težava: `&lang=sl` ni podprt. Koda ga že izpušča |
+| `/api/llm` vrne 501 | `OPENROUTER_API_KEY` ni nastavljen v `.env.local` |
+| Počasen file-watch / `EBUSY` napake | Repo je na `/mnt/c/...`. Premaknite ga na WSL filesystem (`~/`) |
+| `supabase start` obstane na pulling | Docker Desktop se je pravkar zbudil — počakajte minuto ali ročno `docker pull` |
+| ETL `08_flag_unbuildable.py` propade | Migracije niso aplicirane. Zaženite `supabase db reset --local` |
 
 ---
 
-## Data Sources
+## Viri podatkov
 
-All data is open and freely available. See [`data/DATA_SOURCES.md`](./data/DATA_SOURCES.md) for download commands.
+Vsi podatki so odprti in javno dostopni. Glej [`data/DATA_SOURCES.md`](./data/DATA_SOURCES.md) za ukaze prenosov.
 
-| Source | What | License | Records |
+| Vir | Vsebina | Licenca | Zapisi |
 |---|---|---|---|
-| **[Geofabrik OSM](https://download.geofabrik.de/europe/slovenia.html)** | Roads, amenities, buildings, land use | ODbL | ~308 MB PBF |
-| **[GURS RPE](https://github.com/stefanb/gurs-rpe)** | 212 municipality boundaries | CC BY 4.0 | 212 polygons |
-| **[ARSO Zavarovana območja](http://gis.arso.gov.si/geoserver/ows)** | Protected areas (parks, reserves) | ARSO Open | 531 polygons |
-| **[ARSO Natura 2000](http://gis.arso.gov.si/geoserver/ows)** | EU ecological network | ARSO Open | 355 polygons |
-| **[Kontur Population](https://data.humdata.org/dataset/kontur-population-slovenia)** | H3-native population density | CC BY 4.0 | ~27,400 cells |
-| **[OpenFreeMap](https://openfreemap.org/)** | Vector tile basemap | Free | Hosted |
+| **[Geofabrik OSM](https://download.geofabrik.de/europe/slovenia.html)** | Ceste, dobrine, stavbe, raba tal | ODbL | ~308 MB PBF |
+| **[GURS RPE](https://github.com/stefanb/gurs-rpe)** | 212 občinskih mej | CC BY 4.0 | 212 poligonov |
+| **[ARSO zavarovana območja](https://gis.arso.gov.si/related/ARSO_WFS/)** | Naravoarstveni status (parki, rezervati) | CC BY 4.0 | 531 poligonov |
+| **[CRP — degradirana območja](https://crp.gis.si/)** | Centralni register degradiranih zemljišč | Javno dostopno | — |
+| **[eProstor — predlogi za nove storitve](https://eprostor.gov.si/imps/srv/slv/catalog.search#/metadata/9a8fd241-9162-407c-94e7-c98e05766881)** | Negradijene parcele za priporočila gradnje | Javno dostopno | — |
+| **[Kontur Population](https://data.humdata.org/dataset/kontur-population-slovenia)** | H3-natively populacijski raster | CC BY 4.0 | ~27 400 res-8 celic |
+| **[OpenFreeMap](https://openfreemap.org/)** | Vektorski osnovni zemljevid | Brezplačno | Hostano |
 
 ---
 
-## The Eight Categories
+## Osem kategorij
 
-Every cell is scored against these eight daily-needs categories:
+Vsaka celica je ocenjena glede na teh osem kategorij dnevnih dobrin:
 
-| # | Category | OSM Tags | Examples |
+| # | Kategorija | OSM oznake | Primeri |
 |---|---|---|---|
-| 1 | 🛒 **Trgovina** (Shopping) | `shop=supermarket\|convenience\|bakery` | Mercator, Spar, local bakeries |
-| 2 | 🎓 **Izobraževanje** (Education) | `amenity=kindergarten\|school` | Kindergartens, primary schools |
-| 3 | ⚕️ **Zdravstvo** (Healthcare) | `amenity=clinic\|doctors\|hospital\|pharmacy` | Health centers, pharmacies |
-| 4 | 🌳 **Park** (Green spaces) | `leisure=park`, `landuse=forest` | City parks, urban forests |
-| 5 | 🚌 **Javni promet** (Transit) | `public_transport=stop_position\|station` | Bus stops, train stations |
-| 6 | 🏅 **Šport** (Sports) | `leisure=sports_centre\|playground\|pitch` | Sports halls, playgrounds |
-| 7 | ✂️ **Storitve** (Services) | `amenity=post_office\|bank\|restaurant` | Post offices, banks, restaurants |
-| 8 | 💼 **Delo** (Work) | `office=*` | Offices, coworking spaces |
+| 1 | 🛒 **Trgovina** | `shop=supermarket\|convenience\|bakery` | Mercator, Spar, lokalne pekarne |
+| 2 | 🎓 **Izobraževanje** | `amenity=kindergarten\|school` | Vrtci, osnovne šole |
+| 3 | ⚕️ **Zdravstvo** | `amenity=clinic\|doctors\|hospital\|pharmacy` | Zdravstveni domovi, lekarne |
+| 4 | 🌳 **Park** | `leisure=park`, `landuse=forest` | Mestni parki, urbani gozdovi |
+| 5 | 🚌 **Javni promet** | `public_transport=stop_position\|station` | Avtobusne in železniške postaje |
+| 6 | 🏅 **Šport** | `leisure=sports_centre\|playground\|pitch` | Telovadnice, igrišča |
+| 7 | ✂️ **Storitve** | `amenity=post_office\|bank\|restaurant` | Pošte, banke, restavracije |
+| 8 | 💼 **Delo** | `office=*` | Pisarne, coworking prostori |
 
-**Score thresholds:** 🟢 6–8 (excellent) · 🟡 4–5 (adequate) · 🟠 2–3 (limited) · 🔴 0–1 (poor)
+**Pragovi ocen:** 🟢 6–8 (odlično) · 🟡 4–5 (zadovoljivo) · 🟠 2–3 (omejeno) · 🔴 0–1 (slabo)
 
 ---
 
-## License
+## Licenca
 
 [Apache 2.0](https://www.apache.org/licenses/LICENSE-2.0)
