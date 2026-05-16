@@ -21,7 +21,7 @@ Legend: 🟡 partial · ⏳ todo · DEC decision pending
 | F | F1 | Partial-load tiles | 🟡 ETL done |
 | F | F2 | Web Worker | ⏳ |
 | F | F3 | Binary attrs | ⏳ |
-| F | F4 | Speed up first-time view switch | ⏳ **NEW** |
+| F | F4 | Speed up first-time view switch | 🟡 ETL pre-bake done |
 | G | G1 | Heatmap vs hexes | DEC |
 | G | G2 | Ghosts overlay | ⏳ |
 
