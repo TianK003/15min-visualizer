@@ -21,6 +21,18 @@ CREATE TABLE IF NOT EXISTS public.obcine_demographics (
   kids  real NOT NULL
 );
 
+ALTER TABLE public.obcine_demographics ENABLE ROW LEVEL SECURITY;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'obcine_demographics' AND policyname = 'public read obcine_demographics'
+  ) THEN
+    CREATE POLICY "public read obcine_demographics"
+      ON public.obcine_demographics FOR SELECT USING (true);
+  END IF;
+END$$;
+
 -- (3) Per-cell občina assignment + centroid for km-scale distance math.
 -- All three are nullable; ~2.6% of cells fall outside any obcina polygon
 -- (sea / border cells) and stay NULL. The INNER JOIN in the RPC drops them.
@@ -106,7 +118,7 @@ BEGIN
       CASE WHEN cats_required = 0 THEN 1.0
            ELSE cats_hit::real / cats_required END                              AS n_cat,
       LEAST(population / 5000.0, 1.0)                                           AS n_pop,
-      LEAST((population * (1.0 - walk_score / 8.0)) / 3000.0, 1.0)              AS n_dem,
+      LEAST((population * (1.0 - walk_score::real / 8.0)) / 3000.0, 1.0)        AS n_dem,
       CASE WHEN target_lat IS NULL OR centroid_lat IS NULL THEN 0
            ELSE GREATEST(0, 1.0 - LEAST(
              sqrt(power((centroid_lat - target_lat) * 111.0, 2) +
