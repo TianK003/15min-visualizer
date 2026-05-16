@@ -5,7 +5,7 @@ import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { MapboxOverlay } from "@deck.gl/mapbox";
 import type { Layer } from "@deck.gl/core";
-import { GeoJsonLayer, TextLayer, ScatterplotLayer } from "@deck.gl/layers";
+import { GeoJsonLayer, IconLayer, TextLayer, ScatterplotLayer } from "@deck.gl/layers";
 import { H3HexagonLayer, TripsLayer } from "@deck.gl/geo-layers";
 import * as h3 from "h3-js";
 import Scorecard, { type RouteSet, type RoutePath } from "@/components/Scorecard";
@@ -13,7 +13,7 @@ import AddressSearch, { type AddressSearchHandle } from "@/components/AddressSea
 import IzvorPodatkov from "@/components/IzvorPodatkov";
 import ChatBox from "@/components/ChatBox";
 import ThemeToggle from "@/components/ThemeToggle";
-import { categoryById, CATEGORIES } from "@/lib/categories";
+import { categoryById, CATEGORIES, ICON_HOME } from "@/lib/categories";
 import type { AmenityForPoint } from "@/lib/supabase";
 import { useTheme } from "@/lib/theme";
 import { ZONE_REASONS, type Suggestion } from "@/lib/suggestions";
@@ -31,6 +31,16 @@ type GroupedPin = {
 const PATH_ALPHA = 153;
 const FALLBACK_RGB: [number, number, number] = [120, 120, 120];
 const DOT_HALO: [number, number, number, number] = [255, 255, 255, 230];
+
+// Inline SVG mask for the origin pin (a modern monochrome house). White fill
+// on a transparent background; IconLayer uses `mask: true` so the alpha
+// channel is preserved and `getColor` tints the visible pixels.
+const HOME_ICON_URL = `data:image/svg+xml;utf8,${encodeURIComponent(
+  `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="white"><path d="${ICON_HOME}"/></svg>`,
+)}`;
+const HOME_ICON_MAPPING = {
+  home: { x: 0, y: 0, width: 48, height: 48, mask: true },
+} as const;
 
 // Positron is OpenFreeMap's clean grayscale style — desaturated, no green
 // parks / yellow roads. Lets the data colors (score buckets, demand heat)
@@ -1071,10 +1081,10 @@ export default function SloveniaMap() {
       );
     }
 
-    // Origin marker (🏠) — shown whenever paths to amenities are active, so
-    // the user can see exactly where the paths start from. Position is the
-    // address point if available, else the cell centroid. The disc is tinted
-    // by the active category so the home matches the trail color at a glance.
+    // Origin marker — shown whenever paths to amenities are active, so the
+    // user can see exactly where the paths start from. The disc is tinted by
+    // the active category color; a white house SVG mask sits on top for a
+    // clean monochrome glyph (replaces the old 🏠 emoji that looked dated).
     if (selectedH3 && routeSet && routeSet.paths.length > 0) {
       const [oLat, oLng] = originLngLat
         ? [originLngLat[1], originLngLat[0]]
@@ -1095,15 +1105,16 @@ export default function SloveniaMap() {
           lineWidthMinPixels: 2,
           pickable: false,
         }),
-        new TextLayer<{ position: [number, number] }>({
+        new IconLayer<{ position: [number, number] }>({
           id: "origin-pin",
           data: [{ position: originPos }],
-          getText: () => "🏠",
+          iconAtlas: HOME_ICON_URL,
+          iconMapping: HOME_ICON_MAPPING,
+          getIcon: () => "home",
           getPosition: (d) => d.position,
-          getSize: 18,
-          getAlignmentBaseline: "center",
-          getTextAnchor: "middle",
-          characterSet: "auto",
+          getSize: 20,
+          sizeUnits: "pixels",
+          getColor: [255, 255, 255, 255],
           pickable: false,
         }),
       );
@@ -1177,8 +1188,11 @@ export default function SloveniaMap() {
         `Primerno za ${cat?.label.toLowerCase() ?? ""}`;
       const demandStr = s.distanceM > 0 ? `Povpraševanje: ${Math.round(s.distanceM)}` : "";
       const membersStr = s.members ? ` · ${s.members} območij` : "";
+      const iconSvg = cat
+        ? `<svg viewBox="0 0 24 24" width="18" height="18" fill="#374151" style="flex-shrink:0;"><path d="${cat.iconPath}"/></svg>`
+        : `<span style="font-size:14px;flex-shrink:0">📍</span>`;
       return `<div style="display:flex;gap:8px;align-items:flex-start;padding:5px 0;${idx > 0 ? "border-top:1px solid #f0f0f0;" : ""}">
-        <span style="font-size:16px;flex-shrink:0">${cat?.icon ?? "📍"}</span>
+        ${iconSvg}
         <div>
           <div style="font-weight:600;font-size:13px">${cat?.label ?? ""}</div>
           <div style="color:#555;font-size:12px;margin-top:1px">${reason}</div>
@@ -1363,7 +1377,9 @@ export default function SloveniaMap() {
               className={`investor-cat-pill ${investorCat === i ? "active" : ""}`}
               onClick={() => setInvestorCat(investorCat === i ? null : i)}
             >
-              <span className="investor-cat-ico" aria-hidden>{cat.icon}</span>
+              <span className="investor-cat-ico" aria-hidden>
+                <svg viewBox="0 0 24 24" fill="currentColor"><path d={cat.iconPath} /></svg>
+              </span>
               <span className="investor-cat-label">{cat.label}</span>
             </button>
           ))}

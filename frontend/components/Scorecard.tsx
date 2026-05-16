@@ -158,21 +158,34 @@ export default function Scorecard({
     };
   }, [amenities, isos]);
 
-  // Mode toggle: re-publish active polygon + amenities + re-fetch active route.
+  // Mode toggle: just re-fetch the active route — iso/amenity publishing is
+  // handled by the centralized effect below (which has `mode` in its deps).
   useEffect(() => {
     if (!h3id) return;
-    onIsochrone(isoVisible ? isos[mode] : null);
-    onAmenities(isoVisible ? visibleAmenities[mode] : null);
     if (activeCat) void fetchRoutesForCategory(activeCat);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode]);
 
-  // Whenever isos / visibility / amenity sets land, sync to parent.
+  // What we publish to the map as hoverable amenity dots:
+  //   - iso polygon visible  → all amenities within 15 min (every category)
+  //   - category route active → ONLY the active category's amenities
+  //                              (so hovering a path endpoint reveals its name
+  //                               without dropping the whole 15-min polygon on)
+  //   - neither              → null (no dots on map)
+  // The map applies its own active-category gate on the hover *label*, so
+  // dots-only mode never leaks names from other categories.
+  const amenitiesForMap = useMemo<AmenityForPoint[] | null>(() => {
+    if (isoVisible) return visibleAmenities[mode];
+    if (activeCat) return visibleAmenities[mode].filter((a) => a.category === activeCat);
+    return null;
+  }, [isoVisible, activeCat, visibleAmenities, mode]);
+
+  // Publish iso polygon + amenities to parent.
   useEffect(() => {
     onIsochrone(isoVisible ? isos[mode] : null);
-    onAmenities(isoVisible ? visibleAmenities[mode] : null);
+    onAmenities(amenitiesForMap);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isos, isoVisible, visibleAmenities]);
+  }, [isos, isoVisible, amenitiesForMap, mode]);
 
   const toggleIsochrones = async () => {
     if (!h3id) return;
@@ -309,7 +322,9 @@ export default function Scorecard({
                       aria-pressed={isActive}
                       data-cat={c.id}
                     >
-                      <span className="ico" aria-hidden>{c.icon}</span>
+                      <span className="ico" aria-hidden>
+                        <svg viewBox="0 0 24 24" fill="currentColor"><path d={c.iconPath} /></svg>
+                      </span>
                       <span className="cat">
                         {c.label}
                         <span className="cat-color" style={{ background: `rgb(${c.color[0]}, ${c.color[1]}, ${c.color[2]})` }} aria-hidden />

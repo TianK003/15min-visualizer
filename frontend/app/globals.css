@@ -658,7 +658,18 @@ button { font-family: inherit; }
 .scorecard-row.miss,
 .scorecard-row:disabled { color: var(--text-tertiary); cursor: default; }
 .scorecard-row.miss:hover { background: transparent; }
-.scorecard-row .ico { font-size: 16px; }
+.scorecard-row .ico {
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+.scorecard-row .ico svg { width: 100%; height: 100%; display: block; }
+.scorecard-row.active .ico { color: var(--accent-strong); }
+[data-theme="dark"] .scorecard-row.active .ico { color: var(--accent); }
 .scorecard-row .cat { font-weight: 500; display: flex; align-items: center; gap: 5px; min-width: 0; }
 .scorecard-row.active .cat { font-weight: 600; color: var(--accent-strong); }
 .cat-color {
@@ -775,11 +786,17 @@ button { font-family: inherit; }
   outline-offset: 1px;
 }
 .investor-cat-ico {
-  font-size: 16px;
-  width: 20px;
-  text-align: center;
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
   flex-shrink: 0;
 }
+.investor-cat-ico svg { width: 100%; height: 100%; display: block; }
+.investor-cat-pill.active .investor-cat-ico { color: var(--accent-strong); }
+[data-theme="dark"] .investor-cat-pill.active .investor-cat-ico { color: var(--text-primary); }
 .investor-cat-label {
   flex: 1;
   white-space: nowrap;
